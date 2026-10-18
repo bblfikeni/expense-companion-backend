@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenAPI" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+    <PackageReference Include="Serilog.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Companion.Core\Companion.Core.csproj" />
+    <ProjectReference Include="..\..\Companion.Data\Companion.Data.csproj" />
+    <ProjectReference Include="..\..\Companion.Events\Companion.Events.csproj" />
+    <ProjectReference Include="..\..\Companion.Messaging\Companion.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>

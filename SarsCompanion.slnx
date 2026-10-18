@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/Services/">
+    <Project Path="Services/Companion.Api/Companion.Api.csproj" />
+    <Project Path="Services/Companion.Extraction/Companion.Extraction.csproj" />
+    <Project Path="Services/Companion.Notification/Companion.Notification.csproj" />
+    <Project Path="Services/Companion.Realtime/Companion.Realtime.csproj" />
+    <Project Path="Services/Companion.Reporting/Companion.Reporting.csproj" />
+    <Project Path="Services/Companion.Scheduler/Companion.Scheduler.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/Companion.Api.Tests/Companion.Api.Tests.csproj" />
+  </Folder>
+  <Project Path="Companion.Core/Companion.Core.csproj" />
+  <Project Path="Companion.Data/Companion.Data.csproj" />
+  <Project Path="Companion.Events/Companion.Events.csproj" />
+  <Project Path="Companion.Messaging/Companion.Messaging.csproj" />
+</Solution>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Companion.Core\Companion.Core.csproj" />
+    <ProjectReference Include="..\..\Companion.Data\Companion.Data.csproj" />
+    <ProjectReference Include="..\..\Companion.Events\Companion.Events.csproj" />
+    <ProjectReference Include="..\..\Companion.Messaging\Companion.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>

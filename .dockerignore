@@ -1,0 +1,7 @@
+# Excluded from Docker build contexts
+.git
+web/
+bin/
+obj/
+.env
+secrets/
