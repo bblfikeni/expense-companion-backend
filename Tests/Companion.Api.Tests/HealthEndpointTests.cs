@@ -1,18 +1,30 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
+using Companion.Api.Tests.Infrastructure;
 
 namespace Companion.Api.Tests;
 
-public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+[Collection(PostgresCollection.Name)]
+public class HealthEndpointTests : IAsyncLifetime
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly PostgresFixture _postgres;
 
-    public HealthEndpointTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    private CompanionApiFactory? _factory;
+
+    public HealthEndpointTests(PostgresFixture postgres) => _postgres = postgres;
+
+    public async Task InitializeAsync()
+        => _factory = new CompanionApiFactory(await _postgres.CreateEmptyDatabaseAsync());
+
+    public Task DisposeAsync()
+    {
+        _factory?.Dispose();
+        return Task.CompletedTask;
+    }
 
     [Fact]
     public async Task Health_ReturnsOk()
     {
-        var client = _factory.CreateClient();
+        using var client = _factory!.CreateClient();
 
         var response = await client.GetAsync("/health");
 

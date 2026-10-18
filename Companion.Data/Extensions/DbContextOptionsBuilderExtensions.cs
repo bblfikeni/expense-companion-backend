@@ -17,11 +17,47 @@ public static class DbContextOptionsBuilderExtensions
     public static DbContextOptionsBuilder UseCompanionDatabase(
         this DbContextOptionsBuilder optionsBuilder,
         string connectionString)
+        => optionsBuilder.UseCompanionDatabase(connectionString, new CompanionPostgresOptions());
+
+    public static DbContextOptionsBuilder UseCompanionDatabase(
+        this DbContextOptionsBuilder optionsBuilder,
+        string connectionString,
+        CompanionPostgresOptions postgresOptions)
     {
         ArgumentException.ThrowIfNullOrEmpty(connectionString);
+        ArgumentNullException.ThrowIfNull(postgresOptions);
 
-        return optionsBuilder
-            .UseNpgsql(connectionString)
-            .UseSnakeCaseNamingConvention();
+        optionsBuilder.UseNpgsql(
+            connectionString,
+            npgsql =>
+            {
+                npgsql.CommandTimeout((int)postgresOptions.CommandTimeout.TotalSeconds);
+
+                if (postgresOptions.EnableRetryOnFailure)
+                {
+                    // EF's own execution strategy. Enabling it here rather than via a
+                    // wrapper means a caller that opens a transaction automatically gets
+                    // the retrying strategy through CreateExecutionStrategy().
+                    // The third argument is an optional extra set of transient error codes.
+                    npgsql.EnableRetryOnFailure(
+                        postgresOptions.MaxRetryCount,
+                        postgresOptions.MaxRetryDelay,
+                        null);
+                }
+            });
+
+        optionsBuilder.UseSnakeCaseNamingConvention();
+
+        if (postgresOptions.EnableSensitiveDataLogging)
+        {
+            optionsBuilder.EnableSensitiveDataLogging();
+        }
+
+        if (postgresOptions.EnableDetailedErrors)
+        {
+            optionsBuilder.EnableDetailedErrors();
+        }
+
+        return optionsBuilder;
     }
 }

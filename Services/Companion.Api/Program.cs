@@ -1,11 +1,16 @@
-using Companion.Data;
 using Companion.Data.Extensions;
-using Companion.Data.Models;
-using Microsoft.AspNetCore.Identity;
 using Serilog;
+using Serilog.Events;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
+
+    // On first boot the migration check probes __EFMigrationsHistory before that table
+    // exists. Npgsql reports the failed SELECT on this category at Error, so a perfectly
+    // healthy first start would log a scary ERR line. Genuine database failures still
+    // surface: they are reported under the Npgsql / Microsoft.EntityFrameworkCore
+    // categories, not this one.
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", LogEventLevel.Warning)
     .CreateLogger();
 
 try
@@ -18,29 +23,21 @@ try
 
     builder.Services.AddOpenApi();
 
-    var connectionString = builder.Configuration.GetConnectionString("CompanionDb")
-        ?? throw new InvalidOperationException(
-            "Missing connection string 'CompanionDb'. Set it in appsettings.json or override " +
-            "it with the ConnectionStrings__CompanionDb environment variable.");
+    // Persistence. AddCompanionPostgres owns the connection string, the DbContext, its
+    // factory and the Postgres health check, and fails fast with an actionable message
+    // if the connection string is missing. It deliberately does not register Identity
+    // or run migrations.
+    builder.Services.AddCompanionPostgres(builder.Configuration);
 
-    builder.Services.AddDbContext<CompanionDbContext>(options => options.UseCompanionDatabase(connectionString));
-
-    // Identity storage and UserManager/RoleManager only — no authentication scheme is
-    // registered here. That belongs to the auth phase, not to this persistence setup.
-    builder.Services
-        .AddIdentityCore<Profile>(options => options.User.RequireUniqueEmail = true)
-        .AddRoles<Role>()
-        .AddEntityFrameworkStores<CompanionDbContext>();
+    // Identity is a gateway concern. Workers share the schema without it.
+    builder.Services.AddCompanionIdentity();
 
     var app = builder.Build();
 
     // Companion.Api is the gateway and the only service that owns schema migrations.
-    // Workers only check for pending migrations (see DbContextMigrationExtensions).
-    await using (var scope = app.Services.CreateAsyncScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
-        await dbContext.ApplyMigrationsAsync(app.Logger);
-    }
+    // Workers only verify the schema (EnsureCompanionMigrationsAppliedAsync), which is
+    // deliberately not wired anywhere yet.
+    await app.ApplyCompanionMigrationsAsync();
 
     app.MapOpenApi();
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Companion.Api v1"));
