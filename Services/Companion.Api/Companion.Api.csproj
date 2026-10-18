@@ -4,6 +4,12 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenAPI" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <!-- Design-time only (dotnet ef). The gateway is the startup project that
+         owns migrations, so this is where the tooling expects the package. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
