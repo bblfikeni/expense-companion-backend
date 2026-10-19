@@ -1,9 +1,7 @@
 using Companion.Data;
 using Companion.Data.Extensions;
-using HealthChecks.NpgSql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -40,7 +38,7 @@ public static class CompanionPostgresServiceCollectionExtensions
             throw new InvalidOperationException(
                 $"Connection string '{connectionStringName}' is missing or empty. " +
                 $"Set it under 'ConnectionStrings:{connectionStringName}' (e.g. in appsettings.json) " +
-                $"or override it with the '{connectionStringName.Replace(":", "__")}' environment variable.");
+                $"or override it with the 'ConnectionStrings__{connectionStringName.Replace(":", "__")}' environment variable.");
         }
 
         var postgresOptions = new CompanionPostgresOptions();
@@ -53,13 +51,10 @@ public static class CompanionPostgresServiceCollectionExtensions
         void ConfigureOptions(DbContextOptionsBuilder options)
             => options.UseCompanionDatabase(connectionString, postgresOptions);
 
-        // Scoped context for request/unit-of-work usage (including the Identity
-        // EF stores, which resolve the context from the scope)...
-        services.AddDbContext<CompanionDbContext>(ConfigureOptions);
-
-        // ...and a factory for workers and other places that own their own context
-        // lifetime. Singleton (the default): it only holds options, so sharing one
-        // instance is safe and intended.
+        // Factory contexts are owned and disposed by their caller. Singleton options
+        // let the factory and scoped request contexts share the same configuration.
+        services.AddDbContext<CompanionDbContext>(ConfigureOptions,
+            optionsLifetime: ServiceLifetime.Singleton);
         services.AddDbContextFactory<CompanionDbContext>(ConfigureOptions);
 
         // Connectivity only. It answers "can we reach Postgres", not "is the schema

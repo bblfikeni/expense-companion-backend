@@ -1,5 +1,7 @@
 using Companion.Data;
 using Companion.Data.Models;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -17,6 +19,8 @@ public static class CompanionIdentityServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddDataProtection();
+
         // Storage + UserManager/RoleManager only. Deliberately no authentication scheme:
         // AddIdentity() would register cookie schemes and make them the default
         // authenticate/forbid schemes for the whole gateway before the auth phase has
@@ -24,7 +28,12 @@ public static class CompanionIdentityServiceCollectionExtensions
         services
             .AddIdentityCore<Profile>(options => options.User.RequireUniqueEmail = true)
             .AddRoles<Role>()
-            .AddEntityFrameworkStores<CompanionDbContext>();
+            .AddEntityFrameworkStores<CompanionDbContext>()
+            .AddDefaultTokenProviders();
+
+        // SignInManager is not registered by AddIdentityCore; register it explicitly.
+        services.AddHttpContextAccessor();
+        services.AddScoped<SignInManager<Profile>>();
 
         return services;
     }

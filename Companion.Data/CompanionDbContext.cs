@@ -80,6 +80,40 @@ public class CompanionDbContext
         builder.Entity<IdentityUserToken<int>>(entity => entity.ToTable("profile_tokens"));
         builder.Entity<IdentityRoleClaim<int>>(entity => entity.ToTable("role_claims"));
 
+        builder.Entity<OutboxMessage>(entity =>
+        {
+            entity.ToTable("outbox_messages");
+
+            entity.Property(e => e.Type).HasColumnType("text");
+            entity.Property(e => e.Payload).HasColumnType("jsonb");
+            entity.Property(e => e.CorrelationId).HasColumnName("correlation_id");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.PublishedAt).HasColumnName("published_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.Attempts).HasColumnName("attempts");
+
+            // Partial index on rows that have not been relayed yet.
+            entity.HasIndex(e => e.PublishedAt)
+                .HasFilter("published_at IS NULL")
+                .HasDatabaseName("ix_outbox_messages_unpublished");
+        });
+
+        builder.Entity<OtpCode>(entity =>
+        {
+            entity.ToTable("otp_codes");
+
+            entity.Property(e => e.Purpose)
+                .HasConversion<string>()
+                .HasColumnType("text");
+            entity.Property(e => e.CodeHash).HasColumnType("bytea");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.ConsumedAt).HasColumnName("consumed_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.Attempts).HasColumnName("attempts");
+
+            entity.HasIndex(e => new { e.ProfileId, e.Purpose })
+                .HasDatabaseName("ix_otp_codes_profile_id_purpose");
+        });
+
         SeedPlatformAdmin(builder);
     }
 
@@ -119,4 +153,8 @@ public class CompanionDbContext
     private const int PlatformAdminPermissionClaimId = 1;
 
     private const string PlatformAdminConcurrencyStamp = "00000000-0000-0000-0000-000000000001";
+
+    public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
+
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 }

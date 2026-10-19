@@ -7,6 +7,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Companion.Api.Tests;
 
@@ -24,10 +26,8 @@ public class CompanionPostgresRegistrationTests : IAsyncLifetime
     [Fact]
     public void AddCompanionPostgres_FailsFast_WithActionableMessage_WhenConnectionStringMissing()
     {
-        var builder = Host.CreateApplicationBuilder();
-
         var exception = Assert.Throws<InvalidOperationException>(
-            () => builder.Services.AddCompanionPostgres(builder.Configuration));
+            () => new ServiceCollection().AddCompanionPostgres(new ConfigurationBuilder().Build()));
 
         Assert.Contains("CompanionDb", exception.Message, StringComparison.Ordinal);
         Assert.Contains("ConnectionStrings:CompanionDb", exception.Message, StringComparison.Ordinal);
@@ -132,7 +132,7 @@ public class CompanionPostgresRegistrationTests : IAsyncLifetime
         var connectionString = await _postgres.CreateEmptyDatabaseAsync();
         using var host = CompanionHosts.Build(connectionString);
 
-        var registrations = host.Services.GetRequiredService<HealthCheckServiceOptions>();
+        var registrations = host.Services.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value;
         var postgres = Assert.Single(
             registrations.Registrations,
             registration => registration.Name == CompanionPostgresServiceCollectionExtensions.PostgresHealthCheckName);

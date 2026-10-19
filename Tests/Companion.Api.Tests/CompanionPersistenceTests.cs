@@ -110,7 +110,7 @@ public sealed class CompanionPersistenceTests : IAsyncLifetime
         await connection.OpenAsync();
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM pg_constraint WHERE contype = 'c'";
+        command.CommandText = "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE c.contype = 'c' AND n.nspname = 'public'";
         var checkCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
 
         Assert.Equal(0, checkCount);

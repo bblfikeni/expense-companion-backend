@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -16,5 +17,18 @@ public sealed class CompanionApiFactory : WebApplicationFactory<Program>
         => _connectionString = connectionString;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
-        => builder.UseSetting("ConnectionStrings:CompanionDb", _connectionString);
+    {
+        builder.UseSetting("ConnectionStrings:CompanionDb", _connectionString);
+
+        // UseSetting is available while Program registers services. Configuration
+        // callbacks run at Build(), after the gateway's fail-fast secret validation.
+        builder.UseSetting("Auth:Jwt:Issuer", "companion-api");
+        builder.UseSetting("Auth:Jwt:Audience", "companion-web");
+        builder.UseSetting("Auth:Jwt:SigningKey", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        builder.UseSetting("Auth:Otps:Pepper", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        builder.UseSetting("Auth:Otps:ExpiresInMinutes", "10");
+        builder.UseSetting("Auth:Otps:MaxAttempts", "5");
+        builder.UseSetting("Auth:Otps:ResendCooldownInSeconds", "60");
+        builder.UseSetting("Cors:AllowedOrigin", "http://localhost:5173");
+    }
 }
