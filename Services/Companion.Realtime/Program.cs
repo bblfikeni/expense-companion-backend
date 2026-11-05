@@ -1,4 +1,6 @@
+using Companion.Configuration;
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddCompanionAppSettings(builder.Environment);
 
 builder.Services.AddOpenApi();
 

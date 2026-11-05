@@ -12,7 +12,7 @@ artifacts/
 ## Secrets / local configuration
 .env
 secrets/
-appsettings.Development.json
+**/appsettings.Development.json
 
 ## OS
 .DS_Store

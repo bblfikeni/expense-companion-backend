@@ -3,13 +3,17 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Companion.Api.Dtos;
+using Companion.Api.Services;
 using Companion.Api.Tests.Infrastructure;
 using Companion.Data;
 using Companion.Data.Extensions;
 using Companion.Data.Models;
+using Companion.Events;
+using Companion.Messaging;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Companion.Api.Tests;
 
@@ -24,7 +28,13 @@ public sealed class AuthApiTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _factory = new CompanionApiFactory(await _postgres.CreateEmptyDatabaseAsync());
+        _factory = new CompanionApiFactory(
+            await _postgres.CreateEmptyDatabaseAsync(),
+            services =>
+            {
+                services.RemoveAll<IGoogleIdTokenValidator>();
+                services.AddSingleton<IGoogleIdTokenValidator, TestGoogleIdTokenValidator>();
+            });
         _client = _factory!.CreateClient();
     }
 
@@ -175,6 +185,52 @@ public sealed class AuthApiTests : IAsyncLifetime
             .Where(o => o.Type == "EmailVerificationRequested")
             .ToListAsync();
         Assert.Single(outbox);
+    }
+
+    [Fact]
+    public async Task ApiOutboxPublisher_PublishesEmailVerificationThroughSharedMessageBus()
+    {
+        var messageBus = new RecordingMessageBus();
+        using var factory = new CompanionApiFactory(
+            await _postgres.CreateEmptyDatabaseAsync(),
+            services =>
+            {
+                services.RemoveAll<ICompanionMessageBus>();
+                services.AddSingleton<ICompanionMessageBus>(messageBus);
+            },
+            disableOutboxPublisher: false);
+        using var client = factory.CreateClient();
+        var email = RandomEmail();
+
+        var response = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+        {
+            Email = email,
+            Password = "Str0ng-pass!",
+            FullName = "Outbox User",
+            PopiaConsent = true,
+        });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var published = await messageBus.EmailVerificationRequested.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(email.ToUpperInvariant(), published.Email);
+        Assert.False(string.IsNullOrWhiteSpace(published.OtpCode));
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+            var outboxMessage = await db.OutboxMessages.SingleAsync();
+            if (outboxMessage.PublishedAt is not null)
+            {
+                Assert.Equal(0, outboxMessage.Attempts);
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        Assert.Fail("Outbox publisher did not mark the published event.");
     }
 
     [Fact]
@@ -411,6 +467,93 @@ public sealed class AuthApiTests : IAsyncLifetime
     }
 
     // ── Login ─────
+
+    [Fact]
+    public async Task GoogleLogin_NewUserRequiresConsent_ThenCreatesVerifiedAccountAndReturnsToken()
+    {
+        var email = RandomEmail();
+        var idToken = $"valid-google-token:{email}";
+
+        var rejected = await PostJson("/api/auth/google", new GoogleLoginRequest { IdToken = idToken });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+
+        using (var scope = _factory!.Server.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+            Assert.False(await db.Users.AnyAsync(u => u.Email == email));
+        }
+
+        var firstResponse = await PostJson("/api/auth/google", new GoogleLoginRequest
+        {
+            IdToken = idToken,
+            PopiaConsent = true,
+        });
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        var firstResult = await ReadJson<JsonElement>(firstResponse);
+        Assert.True(firstResult.GetProperty("isNewUser").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(firstResult.GetProperty("accessToken").GetString()));
+
+        var secondResponse = await PostJson("/api/auth/google", new GoogleLoginRequest
+        {
+            IdToken = idToken,
+        });
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        var secondResult = await ReadJson<JsonElement>(secondResponse);
+        Assert.False(secondResult.GetProperty("isNewUser").GetBoolean());
+
+        using var verifyScope = _factory!.Server.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        var profile = await verifyDb.Users.SingleAsync(u => u.NormalizedEmail == email.ToUpperInvariant());
+        Assert.True(profile.EmailConfirmed);
+        Assert.True(profile.PopiaConsentGiven);
+        Assert.Single(await verifyDb.UserLogins.Where(login => login.UserId == profile.Id).ToListAsync());
+    }
+
+    [Fact]
+    public async Task GoogleLogin_InvalidIdToken_Returns401()
+    {
+        var response = await PostJson("/api/auth/google", new GoogleLoginRequest { IdToken = "invalid" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GoogleLogin_ExistingPasswordAccount_DoesNotLinkOrActivateCredentials(bool confirmed)
+    {
+        var email = RandomEmail();
+        await RegisterAsync(email);
+        if (confirmed)
+            await VerifyEmailAsync(email);
+
+        var google = await PostJson("/api/auth/google", new GoogleLoginRequest
+        {
+            IdToken = $"valid-google-token:{email}", PopiaConsent = true,
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, google.StatusCode);
+        var password = await PostJson("/api/auth/login", new LoginRequest { Email = email, Password = "Str0ng-pass!" });
+        Assert.Equal(confirmed ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, password.StatusCode);
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        Assert.Equal(confirmed, (await db.Users.SingleAsync()).EmailConfirmed);
+        Assert.Empty(await db.UserLogins.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("person@example.com", false)]
+    [InlineData("person@gmail.com", true)]
+    public async Task GoogleLogin_WithoutHostedDomain_RequiresGmailForNewAccounts(string email, bool allowed)
+    {
+        var response = await PostJson("/api/auth/google", new GoogleLoginRequest
+        {
+            IdToken = $"untrusted-google-token:{email}", PopiaConsent = true,
+        });
+        Assert.Equal(allowed ? HttpStatusCode.OK : HttpStatusCode.Unauthorized, response.StatusCode);
+        using var scope = _factory!.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        Assert.Equal(allowed ? 1 : 0, await db.Users.CountAsync());
+    }
 
     [Fact]
     public async Task Login_ValidCredentials_Returns200_WithToken()
@@ -911,6 +1054,44 @@ public sealed class AuthApiTests : IAsyncLifetime
         using var scope = _factory!.Services.CreateScope();
         var profile = await scope.ServiceProvider.GetRequiredService<CompanionDbContext>().Users.SingleAsync();
         Assert.True(profile.LockoutEnd > DateTimeOffset.UtcNow);
+    }
+
+    private sealed class TestGoogleIdTokenValidator : IGoogleIdTokenValidator
+    {
+        public Task<GoogleIdentity?> ValidateAsync(string idToken, CancellationToken cancellationToken = default)
+        {
+            var prefix = idToken.StartsWith("untrusted-google-token:", StringComparison.Ordinal)
+                ? "untrusted-google-token:" : "valid-google-token:";
+            if (!idToken.StartsWith(prefix, StringComparison.Ordinal))
+                return Task.FromResult<GoogleIdentity?>(null);
+
+            var email = idToken[prefix.Length..];
+            return Task.FromResult<GoogleIdentity?>(string.IsNullOrWhiteSpace(email)
+                ? null
+                : new GoogleIdentity(email.ToLowerInvariant(), email, "Test Google User", EmailVerified: true, HostedDomain: prefix == "valid-google-token:" ? "example.com" : null));
+        }
+    }
+
+    private sealed class RecordingMessageBus : ICompanionMessageBus
+    {
+        public TaskCompletionSource<EmailVerificationRequested> EmailVerificationRequested { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task PublishAsync<T>(T message, CancellationToken cancellationToken = default)
+            where T : class
+        {
+            if (message is EmailVerificationRequested emailVerificationRequested)
+                EmailVerificationRequested.TrySetResult(emailVerificationRequested);
+
+            return Task.CompletedTask;
+        }
+
+        public Task<IAsyncDisposable> SubscribeAsync<T>(
+            string subscriptionId,
+            Func<T, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default)
+            where T : class
+            => throw new NotSupportedException();
     }
 
 }

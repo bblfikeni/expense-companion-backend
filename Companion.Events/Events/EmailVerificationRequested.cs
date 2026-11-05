@@ -1,7 +1,7 @@
 namespace Companion.Events;
 
 /// <summary>
-/// Fired by <see cref="AuthenticationService"/> when a profile requests email verification.
+/// Fired when a profile requests email verification.
 /// <para>
 /// This is the sanctioned exception to the "identifiers-only" rule: auth events are the one
 /// place where email and the OTP are carried in plaintext, because the notification channel

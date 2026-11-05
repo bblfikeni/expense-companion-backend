@@ -11,6 +11,7 @@
     <Project Path="Tests/Companion.Api.Tests/Companion.Api.Tests.csproj" />
   </Folder>
   <Project Path="Companion.Core/Companion.Core.csproj" />
+  <Project Path="Companion.Configuration/Companion.Configuration.csproj" />
   <Project Path="Companion.Data/Companion.Data.csproj" />
   <Project Path="Companion.Events/Companion.Events.csproj" />
   <Project Path="Companion.Messaging/Companion.Messaging.csproj" />

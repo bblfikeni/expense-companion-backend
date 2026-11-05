@@ -8,11 +8,19 @@ namespace Companion.Api.Options;
 /// </summary>
 public sealed class AuthOptions
 {
+    /// <summary>Google OAuth client ID used to validate Google ID tokens.</summary>
+    public GoogleOptions Google { get; set; } = new();
+
     /// <summary>OTP service tuning (expiry, attempt cap, resend cooldown).</summary>
     public OtpOptions Otps { get; set; } = new();
 
     /// <summary>JWT bearer signing and validation parameters.</summary>
     public JwtOptions Jwt { get; set; } = new();
+}
+
+public sealed class GoogleOptions
+{
+    public string ClientId { get; set; } = string.Empty;
 }
 
 /// <summary>

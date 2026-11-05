@@ -91,6 +91,14 @@ namespace Companion.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTimeOffset?>("FailedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("failed_at");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
                     b.Property<string>("Payload")
                         .IsRequired()
                         .HasColumnType("jsonb")
@@ -110,7 +118,7 @@ namespace Companion.Data.Migrations
 
                     b.HasIndex("PublishedAt")
                         .HasDatabaseName("ix_outbox_messages_unpublished")
-                        .HasFilter("published_at IS NULL");
+                        .HasFilter("published_at IS NULL AND failed_at IS NULL");
 
                     b.ToTable("outbox_messages", (string)null);
                 });

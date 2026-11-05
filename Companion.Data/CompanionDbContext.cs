@@ -93,7 +93,7 @@ public class CompanionDbContext
 
             // Partial index on rows that have not been relayed yet.
             entity.HasIndex(e => e.PublishedAt)
-                .HasFilter("published_at IS NULL")
+                .HasFilter("published_at IS NULL AND failed_at IS NULL")
                 .HasDatabaseName("ix_outbox_messages_unpublished");
         });
 

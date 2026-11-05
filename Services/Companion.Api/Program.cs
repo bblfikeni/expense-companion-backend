@@ -1,8 +1,10 @@
+using Companion.Configuration;
 using System.Security.Claims;
 using Companion.Api.Dtos;
 using Companion.Api.Options;
 using Companion.Api.Services;
 using Companion.Data.Extensions;
+using Companion.Messaging;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +23,7 @@ try
     Log.Information("Starting Companion.Api");
 
     var builder = WebApplication.CreateBuilder(args);
+    builder.Configuration.AddCompanionAppSettings(builder.Environment);
 
     builder.Host.UseSerilog();
 
@@ -40,6 +43,10 @@ try
 
     // Authentication services: OtpService, AuthenticationService, JWT Bearer, CORS, ProblemDetails.
     builder.Services.AddAuthenticationServices(builder.Configuration);
+
+    // Shared RabbitMQ integration, used by the transactional outbox publisher below.
+    builder.Services.AddCompanionMessaging(builder.Configuration);
+    builder.Services.AddHostedService<OutboxPublisher>();
 
     builder.Services.AddAuthorization();
 
@@ -107,6 +114,29 @@ try
                 : Results.Problem(statusCode: 401, title: "Login failed", detail: "Invalid email or password.");
         })
         .WithName("Login");
+
+    app.MapPost("/api/auth/google",
+        async (GoogleLoginRequest request, IAuthenticationService auth, CancellationToken ct) =>
+        {
+            var result = await auth.GoogleLoginAsync(request.IdToken, request.PopiaConsent, ct);
+            return result switch
+            {
+                { Success: true } => Results.Ok(new
+                {
+                    result.AccessToken,
+                    result.ExpiresInSeconds,
+                    result.TokenType,
+                    result.IsNewUser,
+                }),
+                { RequiresConsent: true } => Results.Problem(
+                    statusCode: 400,
+                    title: "Consent required",
+                    detail: "POPIA consent must be given to create an account.",
+                    extensions: new Dictionary<string, object?> { ["consent"] = false }),
+                _ => Results.Problem(statusCode: 401, title: "Google authentication failed")
+            };
+        })
+        .WithName("GoogleLogin");
 
     app.MapPost("/api/auth/forgot-password",
         async (ForgotPasswordRequest request, IAuthenticationService auth, CancellationToken ct) =>

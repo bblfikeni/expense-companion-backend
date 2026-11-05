@@ -21,6 +21,7 @@ public sealed class AuthenticationService : IAuthenticationService
     private readonly IOtpService _otp;
     private readonly UserManager<Profile> _users;
     private readonly SignInManager<Profile> _signInManager;
+    private readonly IGoogleIdTokenValidator _googleIdTokenValidator;
     private readonly IOptions<AuthOptions> _auth;
     private readonly TimeProvider _clock;
 
@@ -29,6 +30,7 @@ public sealed class AuthenticationService : IAuthenticationService
         IOtpService otp,
         UserManager<Profile> users,
         SignInManager<Profile> signInManager,
+        IGoogleIdTokenValidator googleIdTokenValidator,
         IOptions<AuthOptions> auth,
         TimeProvider clock)
     {
@@ -36,6 +38,7 @@ public sealed class AuthenticationService : IAuthenticationService
         _otp = otp ?? throw new ArgumentNullException(nameof(otp));
         _users = users ?? throw new ArgumentNullException(nameof(users));
         _signInManager = signInManager ?? throw new ArgumentNullException(nameof(signInManager));
+        _googleIdTokenValidator = googleIdTokenValidator ?? throw new ArgumentNullException(nameof(googleIdTokenValidator));
         _auth = auth ?? throw new ArgumentNullException(nameof(auth));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
@@ -134,6 +137,77 @@ public sealed class AuthenticationService : IAuthenticationService
 
             var token = await BuildTokenAsync(profile, ct);
             return LoginResult.Authenticated(token, expiresInSeconds: 900);
+        }, cancellationToken);
+    }
+
+    public async Task<LoginResult> GoogleLoginAsync(string idToken, bool popiaConsent, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(idToken))
+            return LoginResult.Failed;
+
+        var googleIdentity = await _googleIdTokenValidator.ValidateAsync(idToken, cancellationToken);
+        if (googleIdentity is null ||
+            string.IsNullOrWhiteSpace(googleIdentity.Subject) ||
+            string.IsNullOrWhiteSpace(googleIdentity.Email) ||
+            !googleIdentity.EmailVerified)
+            return LoginResult.Failed;
+
+        var email = NormalizeEmail(googleIdentity.Email);
+        if (email.Length > 256)
+            return LoginResult.Failed;
+
+        return await WithAccountTransactionAsync(email, async ct =>
+        {
+            var linkedProfile = await _users.FindByLoginAsync("Google", googleIdentity.Subject);
+            if (linkedProfile is not null)
+            {
+                if (linkedProfile.IsAnonymized || !linkedProfile.PopiaConsentGiven)
+                    return LoginResult.Failed;
+
+                var existingToken = await BuildTokenAsync(linkedProfile, ct);
+                return LoginResult.Authenticated(existingToken, expiresInSeconds: 900);
+            }
+
+            var profile = await FindByEmailAsync(email, ct);
+            // An email match is not authorization to attach another credential.
+            // This also prevents an unverified, pre-registered password from
+            // becoming usable when the mailbox owner signs in with Google.
+            if (profile is not null || !googleIdentity.HasAuthoritativeEmail)
+                return LoginResult.Failed;
+
+            if (!popiaConsent)
+                return LoginResult.ConsentMissing;
+
+            var fullName = string.IsNullOrWhiteSpace(googleIdentity.Name)
+                ? googleIdentity.Email.Split('@', 2)[0]
+                : googleIdentity.Name.Trim();
+            if (fullName.Length > 255)
+                fullName = fullName[..255];
+
+            profile = new Profile
+            {
+                UserName = email,
+                Email = email,
+                FullName = fullName,
+                EmailConfirmed = true,
+                PopiaConsentGiven = true,
+                PopiaConsentDate = _clock.GetUtcNow(),
+            };
+            var createResult = await _users.CreateAsync(profile);
+            if (!createResult.Succeeded)
+                return LoginResult.Failed;
+
+            var addLoginResult = await _users.AddLoginAsync(
+                profile,
+                new UserLoginInfo("Google", googleIdentity.Subject, "Google"));
+            if (!addLoginResult.Succeeded)
+            {
+                await _users.DeleteAsync(profile);
+                return LoginResult.Failed;
+            }
+
+            var token = await BuildTokenAsync(profile, ct);
+            return LoginResult.Authenticated(token, expiresInSeconds: 900, isNewUser: true);
         }, cancellationToken);
     }
 
@@ -327,4 +401,3 @@ public sealed class AuthenticationService : IAuthenticationService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
-

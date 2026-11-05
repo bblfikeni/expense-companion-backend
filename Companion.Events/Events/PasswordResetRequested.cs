@@ -1,8 +1,7 @@
 namespace Companion.Events;
 
 /// <summary>
-/// Fired by <see cref="AuthenticationService"/> when a confirmed profile requests a password
-/// reset.
+/// Fired when a confirmed profile requests a password reset.
 /// <para>
 /// This is the sanctioned exception to the "identifiers-only" rule: auth events carry email
 /// and the OTP in plaintext (the notification channel needs them to deliver the code). They

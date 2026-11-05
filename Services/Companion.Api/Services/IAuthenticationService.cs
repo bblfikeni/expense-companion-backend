@@ -15,6 +15,7 @@ public interface IAuthenticationService
     Task<VerificationResult> VerifyEmailAsync(string email, string code, CancellationToken cancellationToken = default);
     Task<ResendResult> ResendVerificationAsync(string email, CancellationToken cancellationToken = default);
     Task<LoginResult> LoginAsync(string email, string password, CancellationToken cancellationToken = default);
+    Task<LoginResult> GoogleLoginAsync(string idToken, bool popiaConsent, CancellationToken cancellationToken = default);
     Task<ForgotResult> ForgotPasswordAsync(string email, CancellationToken cancellationToken = default);
     Task<ResetResult> ResetPasswordAsync(string email, string code, string newPassword, CancellationToken cancellationToken = default);
     Task<ProfileResult?> GetProfileAsync(Guid profilePublicId, CancellationToken cancellationToken = default);
@@ -93,19 +94,27 @@ public sealed class ResendResult
 
 public sealed class LoginResult
 {
-    public static LoginResult Authenticated(string token, int expiresInSeconds)
-        => new(token, expiresInSeconds, success: true);
+    public static LoginResult Authenticated(string token, int expiresInSeconds, bool isNewUser = false)
+        => new(token, expiresInSeconds, success: true, isNewUser: isNewUser);
+
+    public static LoginResult ConsentMissing => new(null, 0, success: false, consentRequired: true);
 
     public static LoginResult Failed => new(null, 0, success: false);
 
-    private LoginResult(string? token, int expiresInSeconds, bool success)
+    private LoginResult(string? token, int expiresInSeconds, bool success, bool isNewUser = false, bool consentRequired = false)
     {
         Success = success;
         AccessToken = token;
         ExpiresInSeconds = expiresInSeconds;
+        IsNewUser = isNewUser;
+        RequiresConsent = consentRequired;
     }
 
     public bool Success { get; }
+
+    public bool IsNewUser { get; }
+
+    public bool RequiresConsent { get; }
 
     public string? AccessToken { get; init; }
 
@@ -174,4 +183,3 @@ public sealed class ProfileResult
 
     public Guid? PublicId { get; }
 }
-

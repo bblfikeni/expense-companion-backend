@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="EasyNetQ" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Companion.Core\Companion.Core.csproj" />
     <ProjectReference Include="..\Companion.Events\Companion.Events.csproj" />
   </ItemGroup>
