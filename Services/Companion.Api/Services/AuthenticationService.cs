@@ -72,7 +72,7 @@ public sealed class AuthenticationService : IAuthenticationService
             if (await ProfileExistsAsync(email, ct))
                 return RegisterResult.Already(email);
 
-            var create = await _users.CreateAsync(profile, request.Password);
+            var create = await _users.CreateAsync(profile);
             if (!create.Succeeded)
                 return RegisterResult.Failed(email);
 
@@ -81,21 +81,30 @@ public sealed class AuthenticationService : IAuthenticationService
         }, cancellationToken);
     }
 
-    public async Task<VerificationResult> VerifyEmailAsync(string email, string code, CancellationToken cancellationToken = default)
+    public async Task<VerificationResult> VerifyEmailAsync(string email, string code, string password, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(code))
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(password))
             return VerificationResult.Failed;
 
         return await WithAccountTransactionAsync(NormalizeEmail(email), async ct =>
         {
             var profile = await FindByEmailAsync(NormalizeEmail(email), ct);
-            if (profile is null)
+            if (profile is null || profile.EmailConfirmed || profile.IsAnonymized)
                 return VerificationResult.Failed;
+
+            foreach (var validator in _users.PasswordValidators)
+            {
+                if (!(await validator.ValidateAsync(_users, profile, password)).Succeeded)
+                    return VerificationResult.Failed;
+            }
 
             var result = await _otp.VerifyAsync(profile.Id, OtpPurpose.EmailVerification, code, ct);
             if (!result.Success)
                 return VerificationResult.Failed;
 
+            // Only the mailbox owner can choose the credential that is activated.
+            profile.PasswordHash = _users.PasswordHasher.HashPassword(profile, password);
+            profile.SecurityStamp = Guid.NewGuid().ToString("N");
             profile.EmailConfirmed = true;
             return VerificationResult.Succeeded;
         }, cancellationToken);

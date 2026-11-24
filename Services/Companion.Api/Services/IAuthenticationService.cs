@@ -12,7 +12,7 @@ namespace Companion.Api.Services;
 public interface IAuthenticationService
 {
     Task<RegisterResult> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
-    Task<VerificationResult> VerifyEmailAsync(string email, string code, CancellationToken cancellationToken = default);
+    Task<VerificationResult> VerifyEmailAsync(string email, string code, string password, CancellationToken cancellationToken = default);
     Task<ResendResult> ResendVerificationAsync(string email, CancellationToken cancellationToken = default);
     Task<LoginResult> LoginAsync(string email, string password, CancellationToken cancellationToken = default);
     Task<LoginResult> GoogleLoginAsync(string idToken, bool popiaConsent, CancellationToken cancellationToken = default);

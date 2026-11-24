@@ -1,6 +1,7 @@
 using Companion.Configuration;
 using System.Security.Claims;
 using Companion.Api.Dtos;
+using Companion.Api.Features.Auth;
 using Companion.Api.Options;
 using Companion.Api.Services;
 using Companion.Data.Extensions;
@@ -49,6 +50,7 @@ try
     builder.Services.AddHostedService<OutboxPublisher>();
 
     builder.Services.AddAuthorization();
+    builder.Services.AddAuthRateLimiting();
 
     var app = builder.Build();
 
@@ -62,99 +64,14 @@ try
 
     app.UseExceptionHandler();
     app.UseCors("companion-web");
+    app.UseRateLimiter();
     app.UseAuthentication();
     app.UseAuthorization();
 
     // Report database outages through the registered PostgreSQL check.
     app.MapHealthChecks("/health");
 
-    // ---------- Auth endpoints ----------
-
-    app.MapPost("/api/auth/register",
-        async (RegisterRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.RegisterAsync(request, ct);
-            return result switch
-            {
-                { Success: true } => Results.Accepted("", new { result.Email, result.Success }),
-                { Success: false, ConsentGiven: false } => Results.Problem(
-                    statusCode: 400,
-                    title: "Consent required",
-                    detail: "POPIA consent must be given to register.",
-                    extensions: new Dictionary<string, object?> { ["consent"] = false }),
-                _ => Results.Problem(statusCode: 400, title: "Registration failed")
-            };
-        })
-        .WithName("Register");
-
-    app.MapPost("/api/auth/verify-email",
-        async (VerifyEmailRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.VerifyEmailAsync(request.Email, request.Code, ct);
-            return result.Success
-                ? Results.NoContent()
-                : Results.Problem(statusCode: 400, title: "Verification failed", detail: "Invalid or expired code.");
-        })
-        .WithName("VerifyEmail");
-
-    app.MapPost("/api/auth/resend-verification",
-        async (ResendVerificationRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            await auth.ResendVerificationAsync(request.Email, ct);
-            return Results.Accepted("", new { Success = true });
-        })
-        .WithName("ResendVerification");
-
-    app.MapPost("/api/auth/login",
-        async (LoginRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.LoginAsync(request.Email, request.Password, ct);
-            return result.Success
-                ? Results.Ok(new { result.AccessToken, result.ExpiresInSeconds, result.TokenType })
-                : Results.Problem(statusCode: 401, title: "Login failed", detail: "Invalid email or password.");
-        })
-        .WithName("Login");
-
-    app.MapPost("/api/auth/google",
-        async (GoogleLoginRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.GoogleLoginAsync(request.IdToken, request.PopiaConsent, ct);
-            return result switch
-            {
-                { Success: true } => Results.Ok(new
-                {
-                    result.AccessToken,
-                    result.ExpiresInSeconds,
-                    result.TokenType,
-                    result.IsNewUser,
-                }),
-                { RequiresConsent: true } => Results.Problem(
-                    statusCode: 400,
-                    title: "Consent required",
-                    detail: "POPIA consent must be given to create an account.",
-                    extensions: new Dictionary<string, object?> { ["consent"] = false }),
-                _ => Results.Problem(statusCode: 401, title: "Google authentication failed")
-            };
-        })
-        .WithName("GoogleLogin");
-
-    app.MapPost("/api/auth/forgot-password",
-        async (ForgotPasswordRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.ForgotPasswordAsync(request.Email, ct);
-            return Results.Accepted("", new { result.Email, result.Success });
-        })
-        .WithName("ForgotPassword");
-
-    app.MapPost("/api/auth/reset-password",
-        async (ResetPasswordRequest request, IAuthenticationService auth, CancellationToken ct) =>
-        {
-            var result = await auth.ResetPasswordAsync(request.Email, request.Code, request.NewPassword, ct);
-            return result.Success
-                ? Results.NoContent()
-                : Results.Problem(statusCode: 400, title: "Reset failed", detail: "Invalid or expired code.");
-        })
-        .WithName("ResetPassword");
+    app.MapAuthEndpoints();
 
     app.MapGet("/api/profile",
         async (Guid profilePublicId, ClaimsPrincipal user, IAuthenticationService auth, CancellationToken ct) =>

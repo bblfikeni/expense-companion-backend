@@ -47,6 +47,21 @@ public sealed class AuthApiTests : IAsyncLifetime
 
     private static string RandomEmail() => $"user-{Guid.NewGuid():N}@example.com";
 
+    [Fact]
+    public async Task ForgotPassword_TooManyAuthRequests_Returns429ProblemDetails()
+    {
+        for (var i = 0; i < 30; i++)
+        {
+            using var response = await PostJson("/api/auth/forgot-password", new { email = "" });
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+
+        using var rejected = await PostJson("/api/auth/forgot-password", new { email = "" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.NotNull(rejected.Headers.RetryAfter?.Delta);
+        Assert.Equal("application/problem+json", rejected.Content.Headers.ContentType?.MediaType);
+    }
+
     private async Task<HttpResponseMessage> PostJson(string path, object body)
     {
         var content = JsonContent.Create(body);
@@ -88,6 +103,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         string code = await ReadOtpFromOutbox(email, "EmailVerificationRequested");
         await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -282,6 +298,30 @@ public sealed class AuthApiTests : IAsyncLifetime
     // ── Verify email ─────
 
     [Fact]
+    public async Task VerifyEmail_PendingSignup_ActivatesOnlyTheVerifiedPassword()
+    {
+        var email = RandomEmail();
+        await RegisterAsync(email);
+        var code = await ReadOtpFromOutbox(email, "EmailVerificationRequested");
+
+        using var missingPassword = await PostJson("/api/auth/verify-email", new { email, code });
+        Assert.Equal(HttpStatusCode.BadRequest, missingPassword.StatusCode);
+
+        const string verifiedPassword = "Verified-Str0ng-password!";
+        using var verified = await PostJson("/api/auth/verify-email",
+            new VerifyEmailRequest { Email = email, Code = code, Password = verifiedPassword });
+        Assert.Equal(HttpStatusCode.NoContent, verified.StatusCode);
+
+        using var original = await PostJson("/api/auth/login",
+            new LoginRequest { Email = email, Password = "Str0ng-pass!" });
+        Assert.Equal(HttpStatusCode.Unauthorized, original.StatusCode);
+
+        using var current = await PostJson("/api/auth/login",
+            new LoginRequest { Email = email, Password = verifiedPassword });
+        Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+    }
+
+    [Fact]
     public async Task VerifyEmail_ValidCode_Returns204()
     {
         var email = RandomEmail();
@@ -292,6 +332,7 @@ public sealed class AuthApiTests : IAsyncLifetime
 
         var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -312,6 +353,7 @@ public sealed class AuthApiTests : IAsyncLifetime
 
         var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = "000000",
         });
@@ -341,6 +383,7 @@ public sealed class AuthApiTests : IAsyncLifetime
 
         var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -361,6 +404,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         {
             var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
             {
+                Password = "Str0ng-pass!",
                 Email = email,
                 Code = "000000",
             });
@@ -370,6 +414,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         // Even the correct code is now rejected because the OTP is locked.
         var final = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -386,6 +431,7 @@ public sealed class AuthApiTests : IAsyncLifetime
 
         var first = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -394,6 +440,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         // Same code again must fail (consumed).
         var second = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = code,
         });
@@ -428,6 +475,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         // Old code no longer works.
         var oldResponse = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = oldCode,
         });
@@ -436,6 +484,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         // New code works.
         var newResponse = await PostJson("/api/auth/verify-email", new VerifyEmailRequest
         {
+            Password = "Str0ng-pass!",
             Email = email,
             Code = newCode,
         });
@@ -886,7 +935,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         await RegisterAsync(email);
         var code = await ReadOtpFromOutbox(email, "EmailVerificationRequested");
         var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => PostJson("/api/auth/verify-email",
-            new VerifyEmailRequest { Email = email, Code = code })));
+            new VerifyEmailRequest { Password = "Str0ng-pass!", Email = email, Code = code })));
         Assert.Single(responses, r => r.StatusCode == HttpStatusCode.NoContent);
         Assert.Equal(5, responses.Count(r => r.StatusCode == HttpStatusCode.BadRequest));
     }
@@ -992,7 +1041,7 @@ public sealed class AuthApiTests : IAsyncLifetime
                 FOR EACH ROW EXECUTE FUNCTION reject_confirmation();
                 """);
         }
-        var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest { Email = email, Code = code });
+        var response = await PostJson("/api/auth/verify-email", new VerifyEmailRequest { Password = "Str0ng-pass!", Email = email, Code = code });
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         using (var scope = _factory!.Services.CreateScope())
         {
@@ -1001,7 +1050,7 @@ public sealed class AuthApiTests : IAsyncLifetime
             Assert.False((await db.Users.SingleAsync()).EmailConfirmed);
             await db.Database.ExecuteSqlRawAsync("DROP TRIGGER reject_confirmation ON profiles");
         }
-        var retry = await PostJson("/api/auth/verify-email", new VerifyEmailRequest { Email = email, Code = code });
+        var retry = await PostJson("/api/auth/verify-email", new VerifyEmailRequest { Password = "Str0ng-pass!", Email = email, Code = code });
         Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode);
     }
 

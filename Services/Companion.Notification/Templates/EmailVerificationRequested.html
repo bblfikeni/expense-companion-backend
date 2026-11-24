@@ -10,6 +10,10 @@
       :root { color-scheme: light dark; supported-color-schemes: light dark; }
       body { margin: 0; padding: 0; width: 100% !important; }
       table { border-collapse: collapse; }
+      .email-slip-edge {
+        mask: conic-gradient(from -45deg at bottom, transparent, #000 1deg 89deg, transparent 90deg)
+          bottom center / 16px 100% repeat-x;
+      }
       @media only screen and (max-width: 480px) {
         .email-padding { padding: 28px 20px !important; }
         .email-title { font-size: 28px !important; line-height: 32px !important; }
@@ -17,7 +21,7 @@
       }
       @media (prefers-color-scheme: dark) {
         body, .email-canvas { background-color: #14161A !important; }
-        .email-slip { background-color: #24272C !important; }
+        .email-slip, .email-slip-edge { background-color: #24272C !important; }
         .email-ink { color: #ECEAE4 !important; }
         .email-faded { color: #A9AEB5 !important; }
         .email-chrome { background-color: #101216 !important; color: #ECEAE4 !important; }
@@ -42,7 +46,7 @@
             <tr>
               <td class="email-slip email-padding" bgcolor="#F7F6F2" style="padding: 36px 32px; background-color: #F7F6F2;">
                 <p style="margin: 0 0 24px;">
-                  <span class="email-stamp" style="display: inline-block; border: 2px solid #2A44A8; padding: 5px 9px; color: #2A44A8; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; font-weight: 600; line-height: 16px; letter-spacing: 1px; text-transform: uppercase;">Account setup</span>
+                  <span class="email-stamp" style="display: inline-block; border: 2px solid #2A44A8; border-radius: 3px; padding: 3px 8px; transform: rotate(-4deg); color: #2A44A8; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; font-weight: 600; line-height: 16px; letter-spacing: 1px; text-transform: uppercase;">Account setup</span>
                 </p>
                 <h1 class="email-title email-ink" style="margin: 0 0 16px; color: #1F2328; font-family: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', Arial, Helvetica, sans-serif; font-size: 34px; font-weight: 800; line-height: 38px; letter-spacing: -1px;">Verify your email address</h1>
                 <p class="email-ink" style="margin: 0 0 28px; color: #1F2328; font-family: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', Arial, Helvetica, sans-serif; font-size: 16px; line-height: 25px;">Enter this code in SARS Expense Companion to finish creating your account.</p>
@@ -50,9 +54,9 @@
                   <tr>
                     <td class="email-rule" style="border-top: 2px dotted #A8A8A5; padding: 24px 0;">
                       <p class="email-faded" style="margin: 0 0 12px; color: #5F646B; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; line-height: 18px; letter-spacing: 1px; text-transform: uppercase;">Verification code</p>
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                         <tr>
-                          <td align="center" class="email-code" bgcolor="#F2D644" style="padding: 18px 12px; background-color: #F2D644; color: #1F2328; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 38px; font-weight: 600; line-height: 46px; letter-spacing: 6px;">{{OtpCode}}</td>
+                          <td align="center" class="email-code" bgcolor="#F2D644" style="padding: 4px 16px; background-color: #F2D644; white-space: nowrap; color: #1F2328; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 38px; font-weight: 600; line-height: 46px; letter-spacing: 6px;">{{OtpCode}}</td>
                         </tr>
                       </table>
                       <p class="email-faded" style="margin: 18px 0 4px; color: #5F646B; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; line-height: 18px; letter-spacing: 1px; text-transform: uppercase;">Valid until</p>
@@ -67,8 +71,11 @@
                 </table>
               </td>
             </tr>
+            <tr aria-hidden="true">
+              <td class="email-slip-edge" height="8" bgcolor="#F7F6F2" style="height: 8px; background-color: #F7F6F2; font-size: 0; line-height: 0;">&nbsp;</td>
+            </tr>
             <tr>
-              <td class="email-faded" align="center" style="padding: 22px 16px 0; color: #5F646B; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; line-height: 19px;">
+              <td class="email-ink" align="center" style="padding: 22px 16px 0; color: #1F2328; font-family: 'IBM Plex Mono', 'Courier New', monospace; font-size: 11px; line-height: 19px;">
                 KEEP EVERY SLIP.<br />
                 <span style="font-family: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', Arial, Helvetica, sans-serif;">Not affiliated with or endorsed by SARS.</span>
               </td>

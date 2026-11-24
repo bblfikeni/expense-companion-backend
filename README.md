@@ -55,6 +55,7 @@ openssl rand -base64 48
 # ConnectionStrings:CompanionDb if you changed the Postgres credentials.
 # Set RabbitMq:ConnectionString in both ignored API and Notification
 # appsettings.Development.json files to the same RabbitMQ connection string.
+# In the Notification worker, set Resend__ApiKey and Resend__From (a verified sender).
 
 dotnet build SarsCompanion.slnx -c Release
 dotnet test
@@ -66,11 +67,22 @@ dotnet run --project Services/Companion.Notification
 Local endpoints: Postgres `localhost:5432`, RabbitMQ management
 `http://localhost:15672`, Seq `http://localhost:5341`.
 
+To use live authentication in `web/`, set `VITE_COMPANION_API_URL=http://localhost:5101`
+in the web environment and restart Vite. Set `Cors__AllowedOrigin` on the API to the
+exact web origin. Leave the API URL unset to use the public demo. For Google, set
+`VITE_GOOGLE_CLIENT_ID` to the same OAuth web client ID as `Auth__Google__ClientId`
+and register the web origin as an authorised JavaScript origin. Registration and
+password recovery require the Notification worker to deliver codes. Live sign-in
+lasts until the access token expires or the page reloads. The workspace still
+shows sample expense records.
+
 ## Current implementation and remaining work
 
 - The API supports registration, email verification, password and Google login, password recovery and
   profile updates. Profile endpoints require a bearer token and a matching
   `profilePublicId` query parameter. Password resets revoke existing bearer tokens.
+- `POST /api/auth/verify-email` requires `email`, `code`, and `password`.
+  The gateway sets the account password only when the email code is verified.
 - Google sign-in accepts a Google ID token at `POST /api/auth/google`. Set
   `Auth__Google__ClientId` to the OAuth client ID used by the web client. First-time
   Google sign-up requires `popiaConsent: true` and an address for which Google is
@@ -97,10 +109,10 @@ Local endpoints: Postgres `localhost:5432`, RabbitMQ management
   rows with `failed_at IS NOT NULL`; after resolving the failure, explicitly replay
   an unexpired event by clearing `failed_at` and `next_attempt_at` and resetting
   `attempts` to zero. Request a fresh code if the original has expired.
-  Email delivery is not implemented yet; Resend is planned. The Notification
-  worker does not subscribe until an `INotificationSender` is registered. A sender
-  must complete only after provider acceptance; handler failures are propagated
-  to EasyNetQ's error handling rather than acknowledged as successful delivery.
+  The Notification worker delivers unexpired verification and reset codes through
+  Resend. It sends the event ID as an idempotency key and completes only after
+  provider acceptance. Persistent delivery failures go to EasyNetQ's error handling.
+  Set `Channels__Email__Enabled=false` to disable email consumption explicitly.
   Configure `RabbitMq:ConnectionString` identically for the API and worker, using
   environment variables or their ignored `appsettings.Development.json` files.
   Outbox payloads contain plaintext delivery codes; access control and a retention

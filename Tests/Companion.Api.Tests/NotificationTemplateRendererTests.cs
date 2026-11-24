@@ -7,30 +7,9 @@ using Microsoft.Extensions.Hosting;
 
 namespace Companion.Api.Tests;
 
-public sealed class NotificationTemplateRendererTests : IDisposable
+public sealed class NotificationTemplateRendererTests
 {
-    private readonly string _contentRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-    private readonly NotificationTemplateRenderer _renderer;
-
-    public NotificationTemplateRendererTests()
-    {
-        var templatesPath = Path.Combine(_contentRoot, "Templates");
-        Directory.CreateDirectory(templatesPath);
-        File.WriteAllText(
-            Path.Combine(templatesPath, "EmailVerificationRequested.html"),
-            "<p>{{OtpCode}} {{ExpiresAtUtc}}</p>");
-        File.WriteAllText(
-            Path.Combine(templatesPath, "EmailVerificationRequested.txt"),
-            "{{OtpCode}} {{ExpiresAtUtc}}");
-        File.WriteAllText(
-            Path.Combine(templatesPath, "PasswordResetRequested.html"),
-            "<p>{{OtpCode}} {{ExpiresAtUtc}}</p>");
-        File.WriteAllText(
-            Path.Combine(templatesPath, "PasswordResetRequested.txt"),
-            "{{OtpCode}} {{ExpiresAtUtc}}");
-
-        _renderer = new NotificationTemplateRenderer(new TestHostEnvironment(_contentRoot));
-    }
+    private readonly NotificationTemplateRenderer _renderer = new(new TestHostEnvironment(AppContext.BaseDirectory));
 
     [Fact]
     public void RenderEmailVerification_EscapesHtmlAndFormatsExpirationInUtc()
@@ -44,8 +23,11 @@ public sealed class NotificationTemplateRendererTests : IDisposable
 
         Assert.Equal("person@example.com", result.Recipient);
         Assert.Equal("Verify your email address", result.Subject);
-        Assert.Equal("<p>&lt;123456&gt; 2026-11-05 12:30 UTC</p>", result.HtmlBody);
-        Assert.Equal("<123456> 2026-11-05 12:30 UTC", result.TextBody);
+        Assert.Contains(">&lt;123456&gt;</td>", result.HtmlBody);
+        Assert.Contains(">2026-11-05 12:30 UTC</p>", result.HtmlBody);
+        Assert.Contains("<123456>", result.TextBody);
+        Assert.Contains("2026-11-05 12:30 UTC", result.TextBody);
+        AssertReceiptTheme(result);
     }
 
     [Fact]
@@ -59,14 +41,18 @@ public sealed class NotificationTemplateRendererTests : IDisposable
         });
 
         Assert.Equal("Reset your password", result.Subject);
+        Assert.Contains(">Password reset code</p>", result.HtmlBody);
+        Assert.Contains(">123456</td>", result.HtmlBody);
+        Assert.Contains("PASSWORD RESET CODE", result.TextBody);
         Assert.Contains("123456", result.TextBody);
+        AssertReceiptTheme(result);
     }
 
     [Fact]
     public async Task Worker_WithoutSender_DoesNotSubscribeOrConsume()
     {
         var bus = new RecordingBus();
-        using var worker = new NotificationWorker(NullLogger<NotificationWorker>.Instance, bus, _renderer, []);
+        using var worker = new NotificationWorker(NullLogger<NotificationWorker>.Instance, bus, _renderer, [], TimeProvider.System);
         await worker.StartAsync(default);
         await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, bus.SubscriptionCount);
@@ -78,7 +64,7 @@ public sealed class NotificationTemplateRendererTests : IDisposable
     {
         var bus = new RecordingBus();
         var sender = new BlockingSender();
-        using var worker = new NotificationWorker(NullLogger<NotificationWorker>.Instance, bus, _renderer, [sender]);
+        using var worker = new NotificationWorker(NullLogger<NotificationWorker>.Instance, bus, _renderer, [sender], TimeProvider.System);
         await worker.StartAsync(default);
         try
         {
@@ -95,11 +81,32 @@ public sealed class NotificationTemplateRendererTests : IDisposable
         finally { await worker.StopAsync(default); }
     }
 
+    [Fact]
+    public async Task Worker_ExpiredCode_SkipsDelivery()
+    {
+        var bus = new RecordingBus();
+        var sender = new BlockingSender();
+        using var worker = new NotificationWorker(NullLogger<NotificationWorker>.Instance, bus, _renderer, [sender], TimeProvider.System);
+        await worker.StartAsync(default);
+        try
+        {
+            var handler = await bus.Handler.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await handler(new EmailVerificationRequested
+            {
+                Email = "person@example.com",
+                OtpCode = "123456",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            }, default).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(sender.Started.Task.IsCompleted);
+        }
+        finally { await worker.StopAsync(default); }
+    }
+
     private sealed class BlockingSender : INotificationSender
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Acceptance { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task SendAsync(RenderedNotification notification, CancellationToken cancellationToken = default)
+        public Task SendAsync(Guid eventId, RenderedNotification notification, CancellationToken cancellationToken = default)
         {
             Started.TrySetResult();
             return Acceptance.Task;
@@ -127,9 +134,14 @@ public sealed class NotificationTemplateRendererTests : IDisposable
         }
     }
 
-    public void Dispose()
+    private static void AssertReceiptTheme(RenderedNotification result)
     {
-        Directory.Delete(_contentRoot, recursive: true);
+        Assert.Contains("class=\"email-chrome\" bgcolor=\"#1F2328\"", result.HtmlBody);
+        Assert.Contains("class=\"email-code\" bgcolor=\"#F2D644\"", result.HtmlBody);
+        Assert.Contains("class=\"email-slip-edge\"", result.HtmlBody);
+        Assert.Contains("@media (prefers-color-scheme: dark)", result.HtmlBody);
+        Assert.DoesNotContain("{{", result.HtmlBody);
+        Assert.DoesNotContain("{{", result.TextBody);
     }
 
     private sealed class TestHostEnvironment(string contentRootPath) : IHostEnvironment
