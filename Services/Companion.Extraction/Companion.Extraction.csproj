@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="Tesseract" />
   </ItemGroup>
 
   <ItemGroup>

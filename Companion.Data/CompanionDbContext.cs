@@ -114,6 +114,85 @@ public class CompanionDbContext
                 .HasDatabaseName("ix_otp_codes_profile_id_purpose");
         });
 
+        builder.Entity<ExpenseExtraction>(entity =>
+        {
+            entity.ToTable("expense_extractions");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.ExpenseId).HasColumnName("expense_id");
+
+            entity.Property(e => e.ExpensePublicId)
+                .HasColumnType("uuid")
+                .HasDefaultValueSql("gen_random_uuid()");
+
+            entity.Property(e => e.Status).HasColumnType("varchar(20)");
+
+            entity.Property(e => e.ImageSetHash).HasColumnType("varchar(64)");
+
+            entity.Property(e => e.OverallConfidence).HasColumnName("overall_confidence").HasColumnType("double precision");
+
+            entity.Property(e => e.ReviewRequired).HasColumnName("review_required");
+
+            entity.Property(e => e.RejectionReason).HasColumnType("varchar(50)");
+
+            entity.Property(e => e.Vendor).HasColumnType("varchar(255)");
+
+            entity.Property(e => e.ExpenseDate).HasColumnName("expense_date").HasColumnType("varchar(50)");
+
+            entity.Property(e => e.TotalAmountCents).HasColumnName("total_amount_cents").HasColumnType("bigint");
+
+            entity.Property(e => e.VatAmountCents).HasColumnName("vat_amount_cents").HasColumnType("bigint");
+
+            entity.Property(e => e.VatClassification).HasColumnType("varchar(30)");
+
+            entity.Property(e => e.IsValidTaxInvoice).HasColumnName("is_valid_tax_invoice");
+
+            entity.Property(e => e.StartedAt).HasColumnName("started_at").HasColumnType("timestamp with time zone");
+
+            entity.Property(e => e.CompletedAt).HasColumnName("completed_at").HasColumnType("timestamp with time zone");
+
+            // Indexes
+            entity.HasIndex(e => e.ExpensePublicId).IsUnique();
+
+            entity.HasIndex(e => new { e.ExpenseId, e.Status });
+
+            });
+
+        builder.Entity<ExpenseImageResult>(entity =>
+        {
+            entity.ToTable("expense_image_results");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.ExtractionId).HasColumnName("extraction_id");
+
+            entity.Property(e => e.PageNo).HasColumnName("page_no");
+
+            entity.Property(e => e.DocumentType).HasColumnType("varchar(50)");
+
+            entity.Property(e => e.OcrEngine).HasColumnType("varchar(50)");
+
+            entity.Property(e => e.ImageQualityScore).HasColumnName("image_quality_score").HasColumnType("double precision");
+
+            entity.Property(e => e.OcrMeanConfidence).HasColumnName("ocr_mean_confidence").HasColumnType("double precision");
+
+            entity.Property(e => e.ProofAmountCents).HasColumnName("proof_amount_cents").HasColumnType("bigint");
+
+            entity.Property(e => e.ProofDate).HasColumnName("proof_date").HasColumnType("varchar(50)");
+
+            entity.Property(e => e.FailureReason).HasColumnType("varchar(100)");
+
+            // Indexes
+            entity.HasIndex(e => new { e.ExtractionId, e.PageNo });
+
+            // Foreign key to expense_extractions
+            entity.HasOne(e => e.Extraction)
+                .WithMany()
+                .HasForeignKey(e => e.ExtractionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         SeedPlatformAdmin(builder);
     }
 
@@ -157,4 +236,8 @@ public class CompanionDbContext
     public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
 
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+
+    public DbSet<ExpenseExtraction> ExpenseExtractions => Set<ExpenseExtraction>();
+
+    public DbSet<ExpenseImageResult> ExpenseImageResults => Set<ExpenseImageResult>();
 }

@@ -22,6 +22,148 @@ namespace Companion.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Companion.Data.Models.ExpenseExtraction", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<string>("ExpenseDate")
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("expense_date");
+
+                    b.Property<int>("ExpenseId")
+                        .HasColumnType("integer")
+                        .HasColumnName("expense_id");
+
+                    b.Property<Guid>("ExpensePublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("expense_public_id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("ImageSetHash")
+                        .IsRequired()
+                        .HasColumnType("varchar(64)")
+                        .HasColumnName("image_set_hash");
+
+                    b.Property<bool?>("IsValidTaxInvoice")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_valid_tax_invoice");
+
+                    b.Property<double>("OverallConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("overall_confidence");
+
+                    b.Property<string>("RejectionReason")
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("rejection_reason");
+
+                    b.Property<bool>("ReviewRequired")
+                        .HasColumnType("boolean")
+                        .HasColumnName("review_required");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("varchar(20)")
+                        .HasColumnName("status");
+
+                    b.Property<long?>("TotalAmountCents")
+                        .HasColumnType("bigint")
+                        .HasColumnName("total_amount_cents");
+
+                    b.Property<long?>("VatAmountCents")
+                        .HasColumnType("bigint")
+                        .HasColumnName("vat_amount_cents");
+
+                    b.Property<string>("VatClassification")
+                        .HasColumnType("varchar(30)")
+                        .HasColumnName("vat_classification");
+
+                    b.Property<string>("Vendor")
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("vendor");
+
+                    b.HasKey("Id")
+                        .HasName("pk_expense_extractions");
+
+                    b.HasIndex("ExpensePublicId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expense_extractions_expense_public_id");
+
+                    b.HasIndex("ExpenseId", "Status")
+                        .HasDatabaseName("ix_expense_extractions_expense_id_status");
+
+                    b.ToTable("expense_extractions", (string)null);
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImageResult", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("DocumentType")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("document_type");
+
+                    b.Property<int>("ExtractionId")
+                        .HasColumnType("integer")
+                        .HasColumnName("extraction_id");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("varchar(100)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<double>("ImageQualityScore")
+                        .HasColumnType("double precision")
+                        .HasColumnName("image_quality_score");
+
+                    b.Property<string>("OcrEngine")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("ocr_engine");
+
+                    b.Property<double>("OcrMeanConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("ocr_mean_confidence");
+
+                    b.Property<int>("PageNo")
+                        .HasColumnType("integer")
+                        .HasColumnName("page_no");
+
+                    b.Property<long?>("ProofAmountCents")
+                        .HasColumnType("bigint")
+                        .HasColumnName("proof_amount_cents");
+
+                    b.Property<string>("ProofDate")
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("proof_date");
+
+                    b.HasKey("Id")
+                        .HasName("pk_expense_image_results");
+
+                    b.HasIndex("ExtractionId", "PageNo")
+                        .HasDatabaseName("ix_expense_image_results_extraction_id_page_no");
+
+                    b.ToTable("expense_image_results", (string)null);
+                });
+
             modelBuilder.Entity("Companion.Data.Models.OtpCode", b =>
                 {
                     b.Property<int>("Id")
@@ -417,6 +559,18 @@ namespace Companion.Data.Migrations
                         .HasName("pk_profile_tokens");
 
                     b.ToTable("profile_tokens", (string)null);
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImageResult", b =>
+                {
+                    b.HasOne("Companion.Data.Models.ExpenseExtraction", "Extraction")
+                        .WithMany()
+                        .HasForeignKey("ExtractionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_expense_image_results_expense_extractions_extraction_id");
+
+                    b.Navigation("Extraction");
                 });
 
             modelBuilder.Entity("Companion.Data.Models.OtpCode", b =>
