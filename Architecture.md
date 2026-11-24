@@ -1,645 +1,358 @@
-# SARS Expense Companion - Architecture Document
+# ARCHITECTURE.md — SARS Expense Companion
 
-**Version:** 1.0 (draft)  
-**Date:** 2026-11-23  
-**Based on:** Product-Requirements.md v1.0, Codebase analysis (2026-11-23)  
-**Owner:** Product / Architecture
-
----
-## Table of Contents
-
-## 1. System Overview
-
-## 2. High-Level Architecture
-
-```mermaid
-graph TD
-    %% Client Layer
-## 3. Service Architecture
-
-### 3.1 Companion.Api (Gateway API)
-
-**Responsibilities:**
-- Identity and access management (Auth, RBAC, JWT)
-- Expense CRUD operations with billing entitlement checking
-### 3.2 Companion.Extraction
-
-**Responsibilities:**
-- OCR processing pipeline for receipt images
-- Stuck `Processing` sweeper: 5-minute timeout, 3 retries
-- Low-confidence results routing to manual entry
-- `entry_origin` tracking: System_OCR / User_Manual / User_Override
-### 3.3 Companion.Notification
-
-**Responsibilities:**
-- Email delivery via Resend (sole email provider)
-- Template rendering for verification and reset emails
-- RabbitMQ event consumption (outbox-based)
-- Channel abstraction (`INotificationChannel`) with per-channel on/off flags
-### 3.4 Companion.Reporting
-
-**Responsibilities:**
-- Ad-hoc report generation (PDF/DOCX)
-- Scheduled/recurring reports
-- `202 Accepted` + task ID response (non-blocking client)
-- Report delivery: email or stored for download
-### 3.5 Companion.Scheduler
-
-**Responsibilities:**
-- Stuck `Processing` record sweeper
-- 5-minute timeout per record
-- 3 retries maximum
-- Runs as standalone hosted service
-### 3.6 Companion.Realtime (SignalR)
-
-**Responsibilities:**
-- Push processing results to connected clients
-- Speed-up only; DB is the source of truth (NT-04)
-- Backplane for distributed deployments
-
-## 4. Data Architecture
-
-### 4.1 Database Overview
-
-| Property | Value |
-|----------|-------|
-| **Database** | PostgreSQL 17 |
-| **Schema** | Single shared, flat schema (no database-per-service) |
-| **ORM** | EF Core Code-First |
-| **Migrations** | Applied at gateway startup via `ApplyCompanionMigrationsAsync` |
-| **Migration Location** | `Companion.Data/Migrations/` |
-| **PK Strategy** | int internally; Guid (PublicId) externally |
-| **Money** | `long` cents (`AmountInCents`) end-to-end; rand conversion in UI only |
-| **Receipt Status** | `None / Uploaded / Processing / Qualified / Rejected` (backend-canonical) |
-| **IDs** | int PK internally; `PublicId` (Guid) externally exposed |
-## 5. Messaging Architecture
-
-### 5.1 RabbitMQ Configuration
-
-| Property | Value |
-|----------|-------|
-| **Broker** | RabbitMQ (via `Companion.Messaging` / EasyNetQ) |
-| **Access** | All services via `Companion.Messaging` library only |
-| **Conventions** | Default EasyNetQ conventions (automatic topic/exchange) |
-| **Outbox Pattern** | Transactional outbox + reconciliation sweeper (MVP) |
-| **Polling Interval** | 1000ms (`OutboxPollingIntervalMilliseconds` in appsettings) |
-| **DLQ** | Dead-letter queue support (poison message handling) |
-
-### 5.2 Event Types
-
-## 6. Frontend Architecture
-
-### 6.1 Technology Stack
-
-| Layer | Technology | Version | Purpose |
-|-------|------------|---------|---------|
-| **Framework** | TanStack Start | 1.168.60 | SSR/SSG (Vite-based) |
-| **UI Library** | React | 19.2.0 | Component rendering |
-| **Routing** | TanStack React Router | 1.170.41 | File-based routing |
-| **State Query** | TanStack React Query | 5.83.0 | Data fetching, caching, updates |
-| **Styling** | TailwindCSS | 4.2.1 | Utility-first CSS |
-| **Components** | Radix UI | Various | Accessible primitives |
-| **Icons** | lucide-react | 0.575.0 | Icon set |
-| **Theme** | next-themes | - | 2-state (light/dark) toggle |
-| **Build** | Vite | 7.3.1 | Dev server + production build |
-| **Cloudflare** | `@cloudflare/vite-plugin` | 1.25.5 | R2 presigned URL support |
-| **Fonts** | `@fontsource-variable/bricolage-grotesque` | 5.3.0 | Headings font |
-| **Fonts** | `@fontsource/ibm-plex-mono` | 5.3.0 | Amounts/tax details font |
-
-### 6.2 Route Structure
-## 7. Architecture Constraints
-
-### 7.1 Core Constraints (from §8 of Product Requirements)
-
-| # | Constraint | Status | Notes |
-|---|------------|--------|-------|
-| 1 | Client-server, strictly decoupled | ✅ | API contract is only dependency |
-| 2 | Single shared PostgreSQL 17, flat schema | ✅ | EF Core migrations in Companion.Data |
-| 3 | Services: Gateway API + Extraction + Notification + Realtime + Reporting + Scheduler | ✅ | Defined in §8 |
-| 4 | All RabbitMQ access via `Companion.Messaging` | ✅ | EasyNetQ default conventions |
-| 5 | Native AOT is the target | ⚠️ | QuestPDF and Open XML SDK AOT compatibility unverified |
-| 6 | Local: `dotnet run` against local Postgres/RabbitMQ/Seq | ✅ | `appsettings.Development.json` gitignored |
-| 7 | Deployment: docker-compose with `secrets/` pattern | ✅ | Defined in §8 |
-| 8 | Money: `long` cents end-to-end | ✅ | Rand conversion in UI only |
-| 9 | Receipt status: `None/Uploaded/Processing/Qualified/Rejected` | ✅ | Backend-canonical |
-| 10 | IDs: int PK internally; `PublicId` (Guid) externally | ✅ | Never int PKs in API/JWT/URLs |
-
-### 7.2 Design Constraints (from §10 of Product Requirements)
-
-| Aspect | Decision |
-## 8. Current State vs Requirements
-
-### 8.1 Implementation Gap Summary
-
-| Category | Requirements Status | Implementation Status | Gap |
-|----------|--------------------|----------------------|-----|
-| **Auth (ID-01 to ID-08)** | Mostly [Decided] | Partial: register, login, basic profile | Email verification no delivery; password reset no delivery; RBAC partially; security stamp check [Reported] |
-| **Capture (CP-01 to CP-08)** | Mostly [Decided] | Mock flow only | CP-07: Photos lost on tab close; CP-04: R2 upload flow partially; CP-05: Outbox not wired |
-| **Extraction (EX-01 to EX-08)** | Mixed [Decided]/[Open] | Worker idle | No OCR pipeline; EX-07: confidence threshold open; EX-08: sweeper not running |
-| **Expense (EM-01 to EM-07)** | Mixed [Decided]/[Open] | Basic structure | EM-04: Duplicate detection logic open; EM-06: Free-tier cap enforcement |
-| **Dashboard/Gallery (DB-01, GL-01)** | Mixed [Decided]/[Open] | Mock data only | Exact metrics open; lazy-loaded WebP thumbnails partially |
-| **Reporting (RP-01 to RP-07)** | Mixed [Decided]/[Open] | CSV/JSON samples | RP-05: Free PDF only vs homepage CSV conflict; RP-07: CSV export conflict |
-| **Notifications (NT-01 to NT-06)** | Mixed [Decided]/[Open] | Templates built | NT-03: Channel abstraction not built; NT-05: Plaintext tokens risk; NT-06: Reminders not built |
-| **Billing (BL-01 to BL-05)** | Mixed [Decided]/[Open] | Pricing page | BL-02: PayFast not integrated; BL-03/BL-04: entitlement middleware ambiguous |
-| **Workspace (WS-01, WS-02)** | Mixed [Decided]/[Open] | Business type enum, cap 5 | ID-11: Owner/member roles undefined; no workspace API |
-| **Tests** | [Decided] | 12 of 71 passing | 59 failed (mostly outbox/publisher/poison message tests) |
-
-### 8.2 Standing Coverage Checklist Gaps
-
-| # | Item | Coverage | Gap |
-|---|------|----------|-----|
-| 1 | Onboarding | Mock signup only | No first-run flow: workspace setup, business type, VAT status, first-capture prompt |
-| 2 | Sign up and log in | Backend slice [Reported]; frontend mock | Verify against code; social login backend undecided |
-| 3 | Email verification | OTP flow decided and [Reported] built | **No outbox relay or email delivery** → non-functional end to end |
-| 4 | Password reset | Forgot/reset [Reported] built | Same delivery gap as #3 |
-| 5 | Account deletion | Erasure/anonymisation in TRS v1.2 only | No decision, no API, no UI. POPIA-relevant |
-| 6 | User permissions | Platform RBAC decided | Workspace-level roles for 5-member Premium undefined; enforcement phase (G3) not started |
-| 7 | Empty states | None specified | Define for dashboard, gallery, reports |
-| 8 | Loading states | Receipt pipeline states decided | Other screens unspecified |
-| 9 | Error states | Receipt `Failed` state decided | Global error, auth failure, quota-exceeded, upload failure UX unspecified |
-| 10 | Network states | Polling fallback and refetch decided for receipts | Offline capture, upload resume, and PWA offline behaviour undefined |
-| 11 | Data persistence | DB is source of truth; draft-before-upload decided | **Mock capture holds photos in tab memory; no draft recovery after tab close** |
-| 12 | Payment flow | PayFast and trial/downgrade rules decided | Nothing built; pricing not final; failed-payment and dunning behaviour undefined |
-| 13 | Notifications | Resend email decided; WhatsApp future | Notification content catalogue and reminder rules undefined |
-| 14 | Analytics | None | No product analytics decision. Needs POPIA consent handling |
-| 15 | Crash reporting | Seq for backend logs | Frontend error path undefined since client-errors route was removed (2026-10-18) |
-| 16 | Privacy set-up | POPIA consent field; privacy/terms/POPIA pages exist | Cross-border storage review deferred (R-2); retention policy undefined |
-| 17 | Accessibility | Reduced-motion fallback | No conformance target, no audit |
-| 18 | Responsiveness | 375px baseline | Tablet/desktop breakpoints unspecified |
-| 19 | User flows | Pipelines documented at architecture level | No end-to-end user-flow document |
-## 9. Integration Points
-
-### 9.1 Client ↔ Gateway Integration
-
-| Direction | Method | Authentication | Notes |
-|-----------|--------|----------------|-------|
-| Client → Gateway | HTTPS POST | JWT Bearer token in Authorization header | Security stamp checked on every request (ID-07) |
-| Client → Gateway | HTTPS GET | JWT Bearer token | Profile endpoint validates PublicId matches subject (Program.cs:162) |
-| Client → Gateway | HTTPS PUT | JWT Bearer token | Profile update with subject validation (Program.cs:175) |
-| Client → Gateway | WebSocket (SignalR) | Connected via JWT auth | Push processing results (NT-04); source of truth = DB |
-
-### 9.2 Gateway ↔ Database
-
-| Operation | Technology | Notes |
-|-----------|-----------|-------|
-| Migrations | EF Core `dotnet-ef` | Applied at gateway startup via `ApplyCompanionMigrationsAsync` |
-| Reads | EF Core DbContext (`CompanionDbContext`) | Single shared context, flat schema |
-| Writes | EF Core DbContext | All services share schema; int PKs, PublicId GUIDs externally |
-| Money amounts | `long` cents | UI converts to rand display; DB stores cents |
-| Receipt status | `ReceiptStatus` enum | Backend-canonical: None/Uploaded/Processing/Qualified/Rejected |
-
-### 9.3 Gateway ↔ RabbitMQ
-
-| Flow | Description |
-|------|-------------|
-| **Outbox Publish** | Gateway writes event + outbox row in same DB transaction; publisher service picks up and publishes to RabbitMQ |
-| **Notification Consumption** | Worker subscribes to `EmailVerificationRequested` / `PasswordResetRequested`; renders template; sends via Resend |
-| **Extraction Events** | When OCR pipeline wired: worker publishes `ExpenseProcessed` events |
-| **Report Events** | When reporting wired: worker publishes `ReportGenerated` events |
-| **Scheduler Signals** | Scheduler detects stuck `Processing` records; publishes retry signals |
-
-### 9.4 Client ↔ Cloudflare R2
-
-| Flow | Description |
-|------|-------------|
-| **Presigned URL** | Client generates tracking ID, initializes draft record (CP-03), uploads directly to R2 via short-lived presigned URL (CP-04) |
-| **Compression** | Client-side compression to WebP before upload (CP-02) |
-| **Tracking ID** | Client generates tracking ID before upload (state safeguard against network failure) (CP-03) |
-| **Failure Handling** | Client shows Processing/Extracted/Failed states; refetches on load and reconnect; polling fallback if realtime drops (CP-06) |
-
-## 10. Design Directions
-
-### 10.1 Visual Design
-
-- **"A trusted digital paper trail":** practical, calm, precise; not glossy fintech
-- **Surfaces:** warm receipt paper on soft counter-gray; dark ink hierarchy; dotted rules; compact ledger rows
-- **Type:** Bricolage Grotesque (headings); IBM Plex Mono (amounts, tax details)
-- **Colour semantics:** blue = recorded/verified; red = missing proof; yellow highlight = tax/VAT detail
-- **Motion:** restrained, receipt-like; reduced-motion fallback required
-- **Theme:** light/dark, 2-state toggle (next-themes) - not 3-state [Decided]
-
-### 10.2 Language & Tone
-
-- **Plain South African:** rand, VAT, tax year, SARS
-- **Never imply:** the app files returns or gives tax advice
-- **Legal disclaimers:** "Not a SARS filing tool, not accounting software and not tax advice" (homepage footer)
-- **POPIA language:** "Personal information is handled under POPIA and stored in South Africa" (homepage footer)
-
-### 10.3 Motion & Accessibility
-
-- **Restrained motion:** receipt-like transitions, not animated fintech flourishes
-- **Reduced-motion fallback:** required for accessibility; no WCAG 2.2 AA conformance target (proposed AA [Assumed])
-- **Motion preferences:** respect `prefers-reduced-motion` media query
-
-### 10.4 Information Architecture
-
-- **Homepage sections (in order):**
-  1. Header (brand mark, light/dark toggle, Sign in, Get started)
-  2. Hero (keep every slip. Claim what's yours. Be audit-ready.)
-  3. Capture-to-report animation
-  4. Feature list (snapshot, categorisation, missing-proof check, VAT split, accountant export)
-  5. Example expense (Karoo Hardware, R818.80)
-  6. Pricing (Free R0 / Premium R149/month)
-  7. FAQ and trust notes
-  8. Closing CTA ("Start keeping slips")
-  9. Footer with legal disclaimers
-
-- **Gallery (GL-01):** receipt grid with category filter chips, lazy-loaded WebP thumbnails
-- **Dashboard (DB-01):** expense totals, VAT totals, missing-proof count, tax-year switcher
-- **Filter/sort state:** held in URL via Nuqs (GL-02, assumed retained from TRS)
-## Document Revision History
-
-| Date | Version | Changes | Author |
-|------|---------|---------|--------|
-| 2026-11-23 | 1.0 | Initial architecture document based on Product-Requirements.md v1.0 and codebase analysis | Cline (AI coding agent) |
+Audience: coding agents implementing features. Read fully before writing code. If this document conflicts with the TRS v1.2, **this document wins**. If it conflicts with the actual code, **stop and report the conflict**; do not guess.
 
 ---
 
-## Related Documents
+## 0. Operating Rules for Agents
 
-- **Product-Requirements.md** - `/Product-Requirements.md` (primary source)
-- **REVIEW.md** - Code review notes and operational changes
-- **00-INDEX.md** - Phase sequencing and dependency gates
-- **Standing Coverage Checklist** - §11 of Product-Requirements.md
-- **Risks Document** - §14 of Product-Requirements.md
-- **Architecture Constraints** - §8 of Product-Requirements.md
-
-### 10.5 Marketing Homepage Copy Anchors
-
-- **Headline:** "Keep every slip. Claim what's yours. Be audit-ready."
-- **Sub-headline:** "Capture till slips and invoices when you pay, keep the original as proof, and hand your accountant a clean list at year-end."
-- **Trust notes:** "Not affiliated with or endorsed by SARS. Not a filing tool, not accounting software and not tax advice."
-- **Legal footer:** "© {year} SARS Expense Companion. Not affiliated with or endorsed by SARS. Personal information is handled under POPIA and stored in South Africa."
-- **Pricing CTA:** "Start keeping slips" (Free) / "Start Business" (Premium R149/month)
+1. **Verify against actual code before claiming anything.** Status reports are not evidence. Cite file paths and test output.
+2. **One slice per session.** Implement only what the prompt scopes. No drive-by refactors, no extra features.
+3. **Backend is canonical for contracts.** DTOs, enums, field names and units come from backend source. The frontend never invents contracts.
+4. **Never silently revert an architectural decision.** If a decision looks wrong, flag it in your report and keep following it.
+5. **Never soften legal positioning** (Section 1).
+6. **Report honestly:** list what is built, what is stubbed, what failed, and what you did not verify.
+7. **Targeted diffs over rewrites.** Do not reformat files you are not changing.
+8. **Every slice ships with tests** (Section 9). Red tests are never "pre-existing, ignore".
 
 ---
-### 9.5 Background Services ↔ Database
 
-| Service | Interaction |
-|---------|-------------|
-| **Extraction Worker** | Reads expense records with `Processing` status; writes OCR results; updates `ReceiptStatus` to `Qualified` or `Rejected` |
-| **Scheduler Worker** | Scans for `Processing` records > 5 minutes old; triggers 3-attempt retry; marks as `Failed` after exhaustion |
-| **Notification Worker** | Consumes from RabbitMQ; sends emails; no direct DB updates (updates happen via gateway) |
-| **Reporting Worker** | Generates PDF/DOCX from expense data; stores or emails; no direct DB schema changes |
-| **Realtime Hub** (when wired) | Pushes processing status updates to connected clients; DB remains source of truth |
+## 1. Product Boundaries (never violate, never soften)
 
-### 9.6 Cross-Service Data Flow (Example: Receipt Capture → OCR → Saved Expense)
+South African PWA for freelancers, sole proprietors and small businesses to capture, categorise and report expenses.
 
-```mermaid
-sequenceDiagram
-    participant C as Client (Web PWA)
-    participant G as Gateway API
-    participant DB as PostgreSQL
-    participant O as Outbox Publisher
-    participant E as Extraction Worker
-    participant N as Notification Worker
-    
-    C->>G: POST /api/expenses (capture data, tracking ID, receipt status=Uploaded)
-    G->>DB: Write expense record (ReceiptStatus=Uploaded)
-    G->>O: Publish OutboxMessage(ExpenseUploaded)
-    O->>RabbitMQ: Publish ExpenseUploaded event
-    
-    %% Optional: Trigger extraction
-    %% RabbitMQ: ExpenseUploaded -> Extraction Worker
-    E->>DB: Read expense with Uploaded status
-    E->>CLOUD_OCR: Send image for OCR
-    CLOUD_OCR->>E: Vendor, date, total, VAT, confidence
-    E->>DB: Update expense (Vendor, AmountInCents, VatAmountInCents, ReceiptStatus=Processing)
-    E->>O: Publish OutboxMessage(OcrCompleted)
-    O->>RabbitMQ: Publish OcrCompleted event
-    
-    %% Notification on completion
-    N->>RabbitMQ: Consume OcrCompleted
-    N->>C: Push processing result via SignalR (speed-up only)
-    C->>G: GET /api/expenses/{id} (re-fetch, DB is source of truth)
-    G->>DB: Return final expense state
-```
----
-| 20 | Beta testers | None | No cohort, recruitment, feedback channel or exit criteria |
+- NOT a SARS filing tool (no eFiling submission).
+- NOT accounting software (no ledgers, no double-entry).
+- NOT tax advice. Category and VAT outputs are suggestions only.
+- No SARS endorsement claims. No OCR accuracy guarantees.
+- No App Store / Play Store language. It is a PWA.
+- POPIA is the compliance framework. Consent is captured at registration and persisted.
 
-### 8.3 Critical Risks (from §14 of Product Requirements)
-
-| ID | Item | Severity | Confidence |
-|----|------|----------|------------|
-| R-1 | AOT vs. reporting libraries (QuestPDF, Open XML SDK) | High | Fact; outcome unknown |
-| R-2 | Homepage claims "South African data storage" while receipts go to Cloudflare R2 and email via Resend | High | High-probability inference |
-| R-3 | Free tier vs. homepage/mock CSV export conflict | Medium | Fact |
-| R-4 | Plaintext OTP/reset tokens in RabbitMQ events | High | Fact (decision); impact is inference |
-| R-5 | Pricing R149 unvalidated; no cost model behind it | Medium | Fact |
-| R-6 | OCR engine not selected; accuracy on SA thermal receipts is core product risk | High | Assumption; research in progress |
-| R-7 | Duplicate-detection, confidence threshold and category-code mapping logic undefined | Medium | Fact |
-| R-8 | Account deletion/erasure unspecified despite POPIA positioning | Medium | Fact |
-| R-9 | Billing placement ambiguity: "stays in gateway" vs "its own node or API" | Low | Fact; confirm |
-| R-10 | Verification debt: most backend status is agent-reported; five tests failing | Medium | Fact |
-| R-11 | Capture edge case: delayed photo-processing callback may restore page after Stop/Discard | Low | Fact (known frontend issue) |
-| R-12 | Frontend crash reporting gap after client-errors route was removed | Medium | Fact |
+User-facing copy must not claim "South African data storage" (infrastructure is Cloudflare R2 + Resend; open item R-2).
 
 ---
-|--------|----------|
-| **Theme** | "Trusted digital paper trail" - not glossy fintech |
-| **Surfaces** | Warm receipt paper on soft counter-gray; dark ink hierarchy; dotted rules; compact ledger rows |
-| **Typography** | Bricolage Grotesque (headings); IBM Plex Mono (amounts, tax details) |
-| **Color Semantics** | blue = recorded/verified; red = missing proof; yellow = tax/VAT detail |
-| **Motion** | Restrained, receipt-like; reduced-motion fallback required |
-| **Theme Toggle** | 2-state (light/dark) only - not 3-state (system/light/dark) [Decided] |
-| **Language** | Plain South African (rand, VAT, tax year, SARS); never imply tax advice |
-| **Reduced-motion** | Fallback exists; no WCAG 2.2 AA conformance target [Open], proposed AA [Assumed] |
 
-### 7.3 Technical Constraints
-
-| Constraint | Status |
-|------------|--------|
-| **POPIA compliance** | Consent capture built; cross-border storage review deferred (R-2); retention policy undefined |
-| **AOT publishing** | Target; QuestPDF/Open XML SDK verification needed (R-1) |
-| **Lighthouse ≥ 90** | Target at 375px baseline [Decided] |
-| **Performance** | RSC, edge rendering, aggressive image compression [Decided] |
-| **Testing** | xUnit + WebApplicationFactory (Testcontainers PG17) + Schemathesis per phase [Decided] |
-| **Swagger/OpenAPI** | On all services [Decided] |
-| **Security** | Server-side token revocation; no signing keys or peppers in config (required at startup); CORS restricted to client origin only; separate `PublicId` GUIDs exposed, int PKs never in API/JWT/URLs [Decided]/[Reported] |
-
----
+## 2. Solution Layout
 
 ```
-src/routes/
-├── _app/
-│   ├── gallery.tsx       ← GL-01: Receipt grid with filter chips
-│   ├── dashboard.tsx     ← DB-01: Expense totals, VAT totals, missing-proof count
-│   ├── capture.image.tsx ← Camera capture flow
-│   ├── capture.manual.tsx← Manual entry flow
-│   ├── capture.index.tsx ← Capture method selection
-│   └── expenses.tsx      ← Expense listing
-├── subscribe.tsx         ← Onboarding/subscription flow
-├── privacy.tsx           ← POPIA privacy page
-├── tutorials.tsx         ← Usage tutorials
-├── index.tsx             ← Landing page (marketing)
-├── reports/              ← Report viewing/export
-│   └── index.tsx
-├── pricing.tsx           ← BL-05: Pricing R0 / R149/month
-└── register.tsx          ← ID-01: Registration flow
+Companion/
+├─ Companion.Core/          shared extensions, startup extensions, enums, DTOs
+├─ Companion.Data/          EF Core (code-first, PostgreSQL), models, repositories, migrations
+├─ Companion.Events/        event models ONLY. No logic.
+├─ Companion.Messaging/     EasyNetQ connection strategies, generic pub/sub helpers
+├─ Services/
+│  ├─ Companion.Api/            gateway: identity + expenses + billing + upload orchestration
+│  ├─ Companion.Extraction/     OCR / receipt processing (RabbitMQ consumer)
+│  ├─ Companion.Notification/   email / WhatsApp (RabbitMQ consumer)
+│  ├─ Companion.Realtime/       SignalR push (RabbitMQ consumer, backplane)
+│  ├─ Companion.Reporting/      scheduled + ad-hoc report generation (RabbitMQ consumer)
+│  └─ Companion.Scheduler/      all scheduled jobs incl. stuck-Processing sweeper
+├─ Tests/
+│  └─ Companion.Api.Tests/
+└─ web/                     git submodule (Next.js PWA); separate repo, separate agent
 ```
 
-### 6.3 State Management
+Dependency rules:
 
-- **URL-held state:** Filter/sort state in URL via Nuqs (GL-02) - assumed retained from TRS
-- **Query-held data:** Expense lists, filter chips state
-- **QueryCache:** TanStack React Query for API data caching
-- **Local state:** Form states, capture stack, receipt spike count
-
-### 6.4 Mock Mode
-
-- **Environment:** `NEXT_PUBLIC_MOCK_MODE` toggle
-- **Purpose:** Ship frontend with mock data/services before backend exists
-- **Auth simulation:** Separate toggle for simulated auth failure
-- **Scope:** Mock capture flow, mock reports, mock auth states
-
-### 6.5 Key Components
-
-| Component | Purpose | Status |
-|-----------|---------|--------|
-| `Stamp` (`components/slip/Stamp.tsx`) | Receipt status rubber stamp visualization | ✅ Built; shows None/Uploaded/Processing/Qualified/Rejected |
-| `CaptureCard` (`components/CaptureCard.tsx`) | "Confirm Card" after OCR confirmation | ✅ Built; shows verified expense summary |
-| `CaptureModesMock` (`components/CaptureModesMock.tsx`) | Capture method selection (photo/upload/manual) | ✅ Built; mock flow only |
-| `PricingInvoice` (`components/landing/PricingInvoice.tsx`) | Plan comparison (Free R0 / Premium R149) | ✅ Built; shows CSV conflict with RP-05 |
-| `ThemeToggle` (`components/ThemeToggle.tsx`) | Light/dark mode toggle | ✅ Built; uses next-themes |
-| `ReceiptStatus` type | TypeScript type for receipt status | ✅ Built; matches backend canonical |
-
----
-| Event | Publisher | Consumer(s) | Status |
-|-------|-----------|-------------|--------|
-| `EmailVerificationRequested` | Auth gateway | Notification worker | ✅ Subscribed |
-| `PasswordResetRequested` | Auth gateway | Notification worker | ✅ Subscribed |
-| `ExpenseProcessed` | Extraction worker | Reporting, Notification, Dashboard | 🔄 Not wired |
-| `ReportGenerated` | Reporting worker | Email delivery, Download | 🔄 Not wired |
-| `StuckProcessing` | Scheduler worker | Extraction worker (retry) | 🔄 Not wired |
-
-### 5.3 Outbox Pattern
-
-**Flow:**
-1. Gateway publishes domain event **within same transaction** as DB write
-2. Event stored in `OutboxMessages` table with `Status = Pending`
-3. Outbox publisher service (hosted) polls every 1000ms
-4. Publishes pending messages to RabbitMQ
-5. On successful publish: mark `Status = Sent`
-6. On failure: increment `Attempts`, update `NextTryAt`
-
-**Current Gap:** No outbox relay or email delivery operational (per standing checklist item 3). Workers (Notification, Extraction, Reporting, Scheduler) are idle shells.
-
-### 5.4 Message Consumption
-
-**Notification Worker:**
-- Subscribes to `EmailVerificationRequested` and `PasswordResetRequested`
-- Renders template via `NotificationTemplateRenderer`
-- Sends via registered `INotificationSender` (Resend in production)
-- Logs warning if no sender registered
-
-**Extraction Worker:**
-- Currently idle; consumes when extraction feature wired
-- Processes `ExpenseProcessed` events (when OCR pipeline implemented)
-
-**Scheduler Worker:**
-- Consumes stuck processing signals
-- Triggers 5-minute timeout retries (3 max)
-
-**Reporting Worker:**
-- Consumes `ReportGenerated` events
-- Generates PDF/DOCX, emails or stores for download
+- `Companion.Events` references nothing. It contains records/classes only.
+- `Companion.Core` references nothing internal.
+- `Companion.Data` → `Core`.
+- `Companion.Messaging` → `Core`, `Events`.
+- Services → `Core`, `Data`, `Events`, `Messaging` as needed. **Services never reference each other.**
+- No `src/` wrapper. Do not add one.
 
 ---
 
-### 4.2 Core Tables
+## 3. Service Responsibilities and Boundaries
 
-| Table | Key Columns | Description |
-|-------|-------------|-------------|
-| `Users` | `Id` (int, PK), `PublicId` (Guid), `UserName`, `Email`, `NormalizedEmail` | ASP.NET Core Identity users |
-| `Roles` | `Id` (int, PK), `Name`, `NormalizedName` | Identity roles (platform-level) |
-| `Claims` | `Id` (int, PK), `UserId` (int, FK), `ClaimType`, `ClaimValue` | Identity claims (permission codes) |
-| `Expenses` | `Id` (int, PK), `PublicId` (Guid), `Vendor`, `AmountInCents`, `VatAmountInCents`, `VatClassification`, `ReceiptStatus`, `ValidityFlag`, `DuplicateFlag`, `EntryOrigin`, `Confidence`, `StorageReference`, `Date`, `SarsCategoryCode` | Core expense record |
-| `OutboxMessages` | `Id` (int, PK), `Type`, `Payload`, `Status`, `Attempts`, `NextTryAt`, `AccountId` | Transactional outbox for RabbitMQ |
-| `OtpCodes` | `Id` (int, PK), `Purpose`, `Code`, `AccountId`, `CreatedAt`, `ConsumedAt`, `ExpiresAt` | OTP code storage |
-| `Profiles` | `Id` (int, PK), `PublicId` (Guid), `AccountId` (FK), `DisplayName`, `BusinessType`, `VatRegistered`, `VatNumber` | User profile with business info |
-| `Migrations` | `Id` (int, PK), `MigrationId`, `ProductVersion` | EF Core migration tracking |
+| Service           | Owns                                                                                              | Consumes RabbitMQ | Publishes RabbitMQ    | Exposed to client |
+| ----------------- | ------------------------------------------------------------------------------------------------- | ----------------- | --------------------- | ----------------- |
+| **Api (gateway)** | Auth/RBAC, profiles, workspaces, expenses, billing, upload orchestration, report requests, outbox | **Never**         | Via outbox relay only | Yes (HTTP)        |
+| **Extraction**    | OCR, validity checks, VAT classification, result columns                                          | Yes               | Result/status events  | No                |
+| **Notification**  | Email (Resend), WhatsApp (planned)                                                                | Yes               | No                    | **No**            |
+| **Realtime**      | SignalR hubs, backplane                                                                           | Yes               | No                    | Yes (WebSocket)   |
+| **Reporting**     | Scheduled and ad-hoc reports (PDF/DOCX), store or email                                           | Yes               | Report-ready events   | No                |
+| **Scheduler**     | Cron-style jobs, stuck-`Processing` sweeper                                                       | No                | Via events            | No                |
 
-### 4.3 Enums
+Hard rules:
 
-| Enum | Values | Notes |
-|------|--------|-------|
-| `ReceiptStatus` | `None / Uploaded / Processing / Qualified / Rejected` | Backend-canonical; supersedes `proof_status` from TRS v1.2 |
-| `VatClassification` | `Standard 15% / Zero-rated / Exempt / Not claimable / Second-hand` | TRS v1.2; assumed retained |
-| `EntryOrigin` | `System_OCR / User_Manual / User_Override` | Records source of expense data |
-| `BusinessType` | (from TRS v1.2 enum) | Pty Ltd, CC, etc. for workspace segmentation |
-
-### 4.4 Indexing & Performance
-
-- Primary keys on all int/guid PK columns
-- Unique constraint on `PublicId` across tables
-- Index on `Expenses.ReceiptStatus` for dashboard filtering
-- Index on `Expenses.VatClassification` for VAT reporting
-- Index on `Expenses.CreatedAt` / `Expenses.Date` for tax-year queries
-- Index on `OutboxMessages.Status` + `NextTryAt` for sweeper efficiency
-- No UUID columns in API/JWT/URLs (security requirement)
-
----
-**Current State:** ❌ **Not implemented** - No SignalR hubs configured; no realtime push infrastructure
-
-**Design Note:** Meant as speed-up, not reliability guarantee. Client should always reconcile against DB state on load.
+- The gateway **never consumes** from RabbitMQ. It is the only client↔backend interface.
+- The web client has **no direct access** to Notification, Extraction, Reporting or Scheduler.
+- Realtime is a **speed-up, not the source of truth**. A page refresh must show current state from the DB via the gateway.
+- Events carry **IDs and status only**. The client refetches data from the gateway.
+- Billing logic lives in the gateway. **Authorization middleware must always verify the user is entitled to use the product** (active trial, Free, or Premium). No endpoint bypasses it.
+- CORS: allow the web client origin only. No wildcard. Origins come from config.
 
 ---
 
-**Current Implementation:**
-- Basic `BackgroundService` skeleton
-- `ExecuteAsync` delays indefinitely (`Task.Delay(Timeout.Infinite)`)
-- No actual sweeper logic implemented yet
+## 4. Data Rules
 
-**Status:** ⚠️ **Idle** - Worker framework exists but no processing logic
+**Database:** single shared PostgreSQL 17, single flat schema. No schema-per-service, no DB-per-service. Each service owns its own connection configuration.
 
-**Expected Behavior:** On startup, scan for `Processing` records older than 5 minutes, retry up to 3 times, mark as `Failed` after exhaustion
+**Migrations:** live in `Companion.Data`, applied on **gateway startup only**. Other services run a pending-migration check and fail fast if migrations are pending. Gateway `/health` must not report healthy until migrations complete. Other services wait for the gateway to be healthy.
 
----
-- Free: PDF only; Premium: PDF + DOCX (RP-05)
+**Keys and IDs:**
 
-**Architecture:**
-- Client → Gateway validates → publishes to RabbitMQ → Reporting node generates
-- No duplicate active report runs per user (RP-02)
-- Fast response (`202 Accepted` plus task ID) without blocking client (RP-06)
+- All entity PKs are `int` identity (ASP.NET Core `IdentityUser<int>` pattern). Not UUID.
+- Every API-exposed entity has a separate `PublicId` (`Guid`, non-PK, unique index).
+- The int PK **never** appears in API responses, routes, JWT claims or client-visible events. Use `PublicId` everywhere outside the database.
+- Int PKs are for internal FKs, joins and RBAC tables only.
+- No Hashids / reversible encoding.
 
-**Current State:** ⚠️ **Idle** - Worker started but no report generation logic wired; reporting feature not yet implemented
+**Money:** `long AmountInCents` end to end (DB, DTOs, events). Convert to Rand only in the UI presentation layer. Never use `decimal`/`double` for stored or transmitted amounts. VAT amounts follow the same rule.
 
-**UX [Open]:** Scheduled reports UX design not started
+**Naming:** snake_case tables and columns (EFCore.NamingConventions). Plural table names. Timestamps are `timestamptz`, UTC only.
 
----
-- WhatsApp channel (planned, post-MVP)
+**Receipt status:** `ReceiptStatus` = `None | Uploaded | Processing | Qualified | Rejected`. Backend-canonical. The TRS v1.2 `proof_status` enum is superseded.
 
-**Current Implementation:**
-- Subscribes to `EmailVerificationRequested` and `PasswordResetRequested` events
-- Renders templates via `NotificationTemplateRenderer`
-- Sends via registered `INotificationSender`
-- Sender currently null in development → consumption disabled with warning
+**Write ownership:**
 
-**Status:** ⚠️ **Partial** - Email templates built; channel abstraction decided but not built; WhatsApp not implemented; plaintext OTP tokens in RabbitMQ events (see R-4 risk)
+- Extraction writes **only result columns**. User-origin data (manual entries, overrides) always wins.
+- Extraction uses a **narrow DB role** with minimum privileges.
+- Extraction persists results to the DB; the gateway reads them from there.
 
-**Risk R-4:** "Plaintext OTP/reset tokens in RabbitMQ events (and plaintext OTP payloads in the DB with no outbox retention policy). Any broker access, log, or DLQ inspection exposes live credentials."
+**Erasure:** POPIA erasure = anonymisation pipeline, not hard delete of financial records. Flag `is_anonymized`; strip personal identification fields.
 
 ---
-- Confidence threshold configuration (currently [Open])
 
-**Architecture:**
-- Background service (`BackgroundService`) running indefinitely
-- Idle until first extraction feature arrives (currently empty implementation)
-- Consumes from RabbitMQ (when wired)
-- Writes result columns only; user-entered data wins
-- Uses narrow DB role for write operations
+## 5. Messaging Rules
 
-**Current State:** ⚠️ **Idle** - Worker started but no OCR pipeline wired; extraction feature not yet implemented
-
-**Key Decision Points:**
-- OCR engine selection ([Open] - research in progress)
-- Self-hosted preference vs cloud API
-- Confidence threshold value ([Open])
+- All RabbitMQ access goes through `Companion.Messaging` (EasyNetQ). No service references `EasyNetQ` or `RabbitMQ.Client` directly.
+- **Use the existing generic publish/subscribe methods in `Companion.Messaging` for every RabbitMQ integration. Never create new messaging methods, helpers, wrappers or per-event publisher/consumer classes.** A new event needs only a model in `Companion.Events` plus a call to the existing generic method. If the generic methods cannot support a case, stop and report the gap; do not work around it or extend `Companion.Messaging` unprompted.
+- EasyNetQ default conventions (type-based naming). No custom `IConventions`.
+- `Companion.Events` holds models only. No methods with logic, no validation, no serialization attributes beyond what is required.
+- **Transactional outbox** in the gateway: domain write + outbox row in one DB transaction; a relay publishes. Publishing failures never lose events and never fail user writes after commit.
+- **Stuck-`Processing` sweeper** (Scheduler service): timeout 5 minutes, 3 retries, then mark failed.
+- **Extraction consumer** must be idempotent, with a retry limit and a dead-letter queue.
+- Propagate `X-Correlation-Id` across HTTP and RabbitMQ headers.
+- Event naming: past tense, `<Thing><Happened>Event` (e.g. `ReceiptUploadedEvent`). Additive changes only; breaking changes need a new event type.
+- **Known risk (R-4, outstanding):** auth email events currently carry OTP/reset secrets in plaintext. Until resolved: never log event payloads for these events, keep TTLs short, and do not extend this pattern to any other event. Do not "fix" this without an explicit prompt.
 
 ---
-- Transactional outbox publisher for RabbitMQ events
-- EF Core migrations applied at startup
-- OpenAPI/Swagger generation for all endpoints
-- Health checks gated on migration completion
-- CORS restricted to client origin only
-- Token revocation via security stamp check on every authenticated request
 
-**Key Endpoints:**
-- `POST /api/auth/register` - Register with POPIA consent
-- `POST /api/auth/verify-email` - OTP verification
-- `POST /api/auth/login` - JWT issuance
-- `POST /api/auth/forgot-password` - Email token initiation
-- `POST /api/auth/reset-password` - Code-based password reset
-- `GET /api/profile` - Profile retrieval (with PublicId validation)
-- `PUT /api/profile` - Profile update
-- `GET /api/expenses` - Expense listing with filters
-- `POST /api/expenses` - Expense creation (after OCR processing)
-- `GET /api/expenses/{id}` - Expense detail retrieval
+## 6. Receipt Pipeline (reference flow)
 
-**Status:** ✅ Skeleton committed (2026-10-18); auth slice 1 implemented; 47 tests passing (not verified against code)
+1. Client calls `POST /api/expenses/initialize` → gateway inserts expense (`ReceiptStatus.None`) and returns a short-lived presigned **Cloudflare R2** upload URL.
+2. Client uploads the compressed WebP **directly to R2**.
+3. Client calls `POST /api/capture/process` → gateway sets `Processing`, writes outbox row (`ReceiptUploadedEvent`: ids + status only).
+4. Outbox relay publishes. Extraction consumes, runs OCR, validates tax-invoice markers, classifies VAT, writes result columns, publishes `ReceiptProcessedEvent`.
+5. Realtime consumes and pushes a status nudge. Client refetches from the gateway.
+6. Client also refetches on load/reconnect, with polling fallback. UI shows distinct **Processing / Extracted / Failed** states.
+
+Free tier cap (20 expenses/month) is enforced at the **confirm/save** step, not at capture initiation.
 
 ---
-    subgraph CLIENT["Client / Frontend"]
-        direction TB
-        WebPWA["TanStack Start + React 19"]
-        Capture["Capture Flow (camera/upload/manual)"]
-        Dashboard["Dashboard & Gallery"]
-        Reports["Reporting & Export"]
-        ThemeToggle["Theme Toggle (light/dark)"]
-        MockMode["NEXT_PUBLIC_MOCK_MODE"]
-    end
 
-    %% API Gateway Layer
-    subgraph GATEWAY["Companion.Api (Gateway API)"]
-        direction LR
-        Auth["Identity & Access"]
-        RBAC["RBAC & Permissions"]
-        Expenses["Expense CRUD & Entitlement"]
-        Outbox["Transactional Outbox Publisher"]
-        Health["Health Checks"]
-        OpenAPI["OpenAPI/Swagger Generation"]
-        CORS["CORS Middleware"]
-        Revocation["Token Revocation Store"]
-    end
+## 7. Billing and Entitlements
 
-    %% Shared Database
-    subgraph DB["PostgreSQL 17 (Shared, Flat Schema)"]
-        direction LR
-        Identity["Identity Tables (Users, Roles, Claims)"]
-        Expense["Expense Records & Receipt Status"]
-        OTP["OTP Codes & Purposes"]
-        OutboxMessages["Outbox Messages (pending delivery)"]
-        Migrations["EF Core Migrations Table"]
-        ReceiptStatus["ReceiptStatus enum: None/Uploaded/Processing/Qualified/Rejected"]
-        AmountCents["AmountInCents (long)"] 
-        PublicIds["PublicId (Guid) external IDs"]
-    end
-
-    %% Background Services
-    subgraph SERVICES["Background Services"]
-        direction LR
-        Extraction["Companion.Extraction Worker"]
-        Notification["Companion.Notification Worker"]
-        Reporting["Companion.Reporting Worker"]
-        Scheduler["Companion.Scheduler Worker"]
-        Realtime["Companion.Realtime (SignalR)"]
-    end
-
-    %% Connections
-    CLIENT -->|HTTPS, JWT Auth| GATEWAY
-    GATEWAY -->|EF Core Migrations| DB
-    GATEWAY -->|Outbox Events| SERVICES
-    SERVICES -->|RabbitMQ (EasyNetQ)| DB
-    GATEWAY -->|SignalR| CLIENT
-    CLIENT -->|Presigned URL| Cloudflare R2 (CP-04)
-    CLIENT -->|Mock Data| SERVICES (in Mock Mode)
-```
----
-The SARS Expense Companion is a **mobile-first PWA** for South African freelancers, sole proprietors, and small businesses to capture receipts, organise them into categorised expense records with VAT breakdowns, track missing proof, and produce reports for accountants or year-end handoff.
-
-**Core Promise:** "Keep every slip. Claim what's yours. Be audit-ready."
-
-**Key Constraints (non-negotiable):**
-- NOT a SARS filing tool (no eFiling submission)
-- NOT accounting software (no double-entry, ledgers, balance sheets)
-- NOT tax advice (category suggestions are organisational only)
-- No claims of SARS endorsement or affiliation
-- No OCR accuracy guarantees
-- No App Store / Play Store language (PWA only)
-- POPIA-aligned from registration onward
-
-**Architecture Philosophy:** Client-server, strictly decoupled. The API contract is the only dependency between the web agent and backend agent. Single shared PostgreSQL 17 database with flat schema. All RabbitMQ access via `Companion.Messaging`.
+- 30-day full-featured trial, then auto-downgrade to Free (not a cutoff).
+- **Free:** 20 expenses/month, PDF export only, single-user workspace, reminders off.
+- **Premium:** unlimited expenses, PDF + DOCX, up to 5 members (MVP), reminders on.
+- PayFast with recurring billing token. Webhook handlers must validate signatures and be idempotent.
+- Downgrade overage: expenses beyond the cap become read-only per item.
+- Pricing (Free R0 / Premium R149) is hardcoded in the marketing page **deliberately and temporarily**. Do not revert to placeholders. Do not treat R149 as final.
+- Entitlement checks go through one shared policy/service. No inline tier checks scattered in handlers.
 
 ---
-1. [System Overview](#1-system-overview)
-2. [High-Level Architecture](#2-high-level-architecture)
-3. [Service Architecture](#3-service-architecture)
-4. [Data Architecture](#4-data-architecture)
-5. [Messaging Architecture](#5-messaging-architecture)
-6. [Frontend Architecture](#6-frontend-architecture)
-7. [Architecture Constraints](#7-architecture-constraints)
-8. [Current State vs Requirements](#8-current-state-vs-requirements)
-9. [Integration Points](#9-integration-points)
-10. [Design Directions](#10-design-directions)
+
+## 8. Backend Coding Style (.NET 10 / C# 14)
+
+**General**
+
+- Nullable reference types enabled; warnings as errors in Release.
+- File-scoped namespaces. One top-level type per file. File name = type name.
+- Minimal APIs, grouped via `MapGroup` per feature, each group in its own `*Endpoints` static class. No controllers.
+- Feature folders: `Features/<Feature>/` containing endpoints, request/response DTOs, validators, handler.
+- Handlers are thin; business logic lives in services that are unit-testable without HTTP.
+- `async` all the way. `CancellationToken` on every async public method, passed through.
+- No `.Result`, `.Wait()`, `async void`.
+- Prefer `record` for DTOs and events. Immutable by default.
+- DI via constructor injection. No service locator. No static mutable state.
+- Registration through extension methods: `services.AddCompanionPostgres(...)`, `services.AddCompanionMessaging(...)`, etc., living in `Companion.Core` / owning project.
+
+**Runtime**
+
+- Standard JIT-compiled .NET 10. **Native AOT is not used and not required.** Do not set `PublishAot`, do not add AOT/trimming analyzers, and do not constrain code or library choices for AOT compatibility (reflection, EF Core, QuestPDF, Open XML SDK are all fine).
+- Do not reintroduce AOT without an explicit prompt.
+
+**Validation and errors**
+
+- Validate at the boundary (request DTOs). Return RFC 7807 `ProblemDetails`. No ad-hoc error shapes.
+- Never return stack traces or internal IDs. Never leak whether an email exists on auth endpoints (login, forgot-password, resend OTP).
+- Domain errors are explicit result types or typed exceptions mapped in one place. No exception-driven control flow for expected cases.
+
+**Resilience (Polly)**
+
+- Retry with jitter for transient failures; circuit breakers for external calls (Resend, PayFast, R2, OCR provider).
+- Every external call has a timeout.
+- Consistent error log schema across services (Section 10).
+
+**Data access**
+
+- Repositories live in `Companion.Data`. Handlers do not use `DbContext` directly unless the prompt says so.
+- `AsNoTracking` for reads. Project to DTOs; never return entities from endpoints.
+- Concurrency-sensitive flows (OTP issue/verify, login attempts) use DB transactions/locks.
+- No raw SQL string concatenation. Parameterised only.
+- Every migration is reviewed for data loss. No destructive migration without an explicit prompt.
+
+**Naming**
+
+- PascalCase types/methods, camelCase locals/params, `_camelCase` private fields, `I` prefix for interfaces, `Async` suffix on async methods.
+- Configuration keys use `Section__Key` in env vars; options classes bound with `IOptions<T>` and validated on start (`ValidateOnStart`).
 
 ---
+
+## 9. Testing Rules
+
+Two layers per phase, both required:
+
+1. **Integration:** xUnit + `WebApplicationFactory` against **Testcontainers PostgreSQL 17**. No in-memory EF provider for behaviour tests.
+2. **Contract:** Schemathesis against the generated OpenAPI spec.
+
+Additional:
+
+- Swagger/OpenAPI is required on every HTTP service.
+- Test names: `Method_Scenario_ExpectedResult`.
+- Cover: happy path, validation failure, unauthorised, forbidden (wrong tenant/workspace), idempotency, concurrency where relevant.
+- Tenant isolation test for every new workspace-scoped endpoint: user A cannot read or write user B's data.
+- Tests must not depend on execution order or shared mutable state.
+- A slice is **not done** while any test in the solution is red. If a pre-existing failure blocks you, report it with evidence; do not delete or skip tests to go green.
+- Passing tests on empty scaffolds prove nothing. Test behaviour.
+
+Current baseline (as of last audit): 12 of 71 tests passing, mostly outbox/publisher tests failing. Treat fixing the baseline as a prerequisite when a prompt says so.
+
+---
+
+## 10. Security, Config and Observability
+
+**Secrets**
+
+- No secrets in source, `appsettings.json`, or Docker images.
+- `appsettings.Development.json` is gitignored.
+- Local debug: `dotnet run` against localhost Postgres/RabbitMQ.
+- Deployment: docker-compose with the `secrets/` folder pattern; production secrets from GCP Secret Manager.
+- App must **fail on startup** if required secrets are missing (e.g. `Auth__Jwt__SigningKey`, `Auth__Otps__Pepper`). No fallback defaults for security material.
+
+**Auth**
+
+- JWT access + persisted refresh tokens with server-side revocation. Logout revokes.
+- JWT claims use `PublicId`, never the int PK.
+- Security-stamp check on every authenticated request.
+- Email verification via OTP/magic link. OTPs are hashed with a pepper at rest and expire quickly.
+- `RegisterRequest` requires POPIA consent; persist consent flag and timestamp.
+- RBAC via permission codes through ASP.NET Core Identity (`platform-admin` role, `platform:*` claims). **No** `is_platform_admin` boolean.
+- Rate limit auth endpoints (G2).
+
+**Uploads**
+
+- Presigned R2 URLs: short TTL, scoped to a single object key, content-type and size constrained. Object keys are server-generated and not guessable.
+
+**Email**
+
+- Resend is the only provider in all environments including local. No Mailpit, no Mailchimp.
+- `INotificationChannel` abstraction: `EmailChannel` (wraps `IEmailProvider`/`ResendEmailProvider`), `WhatsAppChannel` (planned). Per-channel flags `Channels__Email__Enabled`, `Channels__WhatsApp__Enabled`.
+
+**Logging (Serilog → self-hosted Seq)**
+
+- Structured logs only. Message templates, not string interpolation.
+- Every log carries `CorrelationId`, service name, environment.
+- **Never log:** passwords, OTPs, reset tokens, JWTs, presigned URLs, full email bodies, receipt image content, full personal data. Redact or log `PublicId`.
+- Frontend errors do **not** go to Seq directly and do **not** go through Notification. The route for client error reporting must be designed through the gateway; do not build one without a prompt.
+
+**POPIA**
+
+- Collect only what the feature needs. Track consent. Support erasure via anonymisation.
+- Cross-border storage review (R2, Resend) is deferred past MVP. Do not make residency claims.
+
+---
+
+## 11. Frontend Rules (`web/`, separate repo and agent)
+
+- Next.js (App Router, Server Components by default), TypeScript strict, ESLint clean, PWA, **375px baseline**, Lighthouse performance ≥ 90.
+- Client components only where interaction requires them.
+- `next/image` for gallery; `browser-image-compression` before upload; HTML5 media capture / `getUserMedia` for capture.
+- `nuqs` for URL-synced filter state.
+- `next-themes`, 2-state light/dark toggle (3-state explicitly deferred).
+- Money arrives as cents; format to Rand only in presentation components via one shared formatter.
+- The frontend consumes the backend contract. If a DTO/enum is missing or ambiguous, **ask**; do not invent.
+- Mock mode: `NEXT_PUBLIC_MOCK_MODE`, optimistic auth by default, separate explicit toggle for simulated auth failure. Mock services implement the same interfaces as real ones so swapping is a config change.
+- Never store tokens in `localStorage`. Follow the auth transport defined by the gateway contract.
+- Captured photos must survive tab refresh (open item CP-07; use IndexedDB or equivalent when the prompt says so).
+- Every screen implements loading, empty, error and offline states (Section 12).
+- Accessibility: semantic HTML, labelled inputs, visible focus, 4.5:1 contrast, touch targets ≥ 44px, reduced-motion respected.
+- Design direction: "trusted digital paper trail" / "Modern Ledger". Calm, credible, not playful. Follow the design theme document.
+
+---
+
+## 12. Mandatory Coverage Checklist
+
+Every feature plan and every PR report must state, for each item, **Done / N/A (with reason) / Gap (flagged)**. A missing row is a defect.
+
+| #   | Item               | Agent must address                                             |
+| --- | ------------------ | -------------------------------------------------------------- |
+| 1   | Onboarding         | First-run flow, workspace setup, VAT registration capture      |
+| 2   | Sign up and log in | Validation, POPIA consent, token lifecycle                     |
+| 3   | Email verification | OTP/magic link, expiry, resend throttling                      |
+| 4   | Password reset     | Single-use expiring token, no account enumeration              |
+| 5   | Account deletion   | POPIA erasure via anonymisation, token revocation              |
+| 6   | User permissions   | RBAC permission codes, workspace roles, tenant isolation tests |
+| 7   | Empty states       | Meaningful first-use UI with a clear next action               |
+| 8   | Loading states     | Skeletons/spinners; never a blank screen                       |
+| 9   | Error states       | Typed errors, retry affordance, no raw messages                |
+| 10  | Network states     | Offline/slow/reconnect handling; queued or safe-fail uploads   |
+| 11  | Data persistence   | No lost receipts; draft recovery; DB is source of truth        |
+| 12  | Payment flow       | PayFast, trial → Free downgrade, webhook idempotency           |
+| 13  | Notifications      | Event-driven via Notification service; channel flags           |
+| 14  | Analytics          | Privacy-respecting events; no PII in payloads                  |
+| 15  | Crash reporting    | Server via Seq; client path defined via gateway                |
+| 16  | Privacy set up     | Consent, policy pages, data minimisation, erasure              |
+| 17  | Accessibility      | Section 11 requirements                                        |
+| 18  | Responsiveness     | 375px baseline up to desktop                                   |
+| 19  | User flows         | End-to-end happy and failure paths documented and tested       |
+| 20  | Beta testers       | Feature flags/invite path, feedback channel, test accounts     |
+
+---
+
+## 13. Superseded — Do Not Use
+
+| Superseded                                                    | Replaced by                                                            |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| TRS v1.2 `docker-compose` section                             | Local compose: Postgres, RabbitMQ, Seq only                            |
+| Database-per-service                                          | Single shared DB, flat schema                                          |
+| UUID primary keys                                             | `int` PK + `PublicId` Guid                                             |
+| Four-service split (Identity/Expense/Extraction/Notification) | Gateway API + Extraction, Notification, Realtime, Reporting, Scheduler |
+| Mailpit, Mailchimp                                            | Resend everywhere                                                      |
+| `proof_status` enum                                           | `ReceiptStatus`                                                        |
+| `numeric(12,2)` money                                         | `long` cents                                                           |
+| "No outbox for MVP, 503 on publish failure"                   | Transactional outbox + sweeper in MVP                                  |
+| `SarsCompanion.Messaging` naming                              | `Companion.Messaging`                                                  |
+| Native AOT (TRS "native AOT-compilation capabilities")        | Standard JIT runtime; AOT removed (2026-11-24)                         |
+| Frontend errors via Notification service                      | Not defined yet; do not build                                          |
+
+---
+
+## 14. Open Items Agents Must Not Resolve Unprompted
+
+- R-2: homepage "South African data storage" claim vs R2/Resend reality
+- R-4: plaintext OTP/reset tokens in RabbitMQ events
+- R-6: OCR engine not selected
+- CP-07: captured photos lost on refresh
+- RP-07: homepage CSV export vs "Free: PDF only"
+- Final pricing
+- Cross-border storage/POPIA review
+
+Flag any new gap in your report instead of silently choosing a default.
+
+---
+
+## 15. Agent Report Template
+
+Every session ends with:
+
+1. **Scope delivered** (files changed, endpoints/events added)
+2. **Verified** (commands run, test output, what was actually exercised)
+3. **Not verified / stubbed**
+4. **Test results** (counts, failures with cause)
+5. **Checklist table** (Section 12)
+6. **Decisions touched or conflicts found**
+7. **Proposed next slice**
