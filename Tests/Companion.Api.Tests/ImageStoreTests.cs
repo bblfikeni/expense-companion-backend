@@ -131,24 +131,120 @@ public sealed class ImageStoreTests(PostgresFixture postgres)
         Assert.Equal(Enumerable.Range(1, 10), images.Select(i => i.PageNo));
     }
 
+    [Theory]
+    [InlineData("save")]
+    [InlineData("update")]
+    [InlineData("delete")]
+    public async Task RevocationInProgress_PreventsWriteAfterCommit(string operation)
+    {
+        var factory = new Factory(await postgres.CreateEmptyDatabaseAsync());
+        await using var db = factory.CreateDbContext();
+        await db.Database.MigrateAsync();
+        var profile = new Profile { UserName = "owner", FullName = "Owner", PopiaConsentDate = DateTimeOffset.UtcNow };
+        var workspace = new Workspace { Name = "workspace" };
+        var expense = new Expense { Workspace = workspace };
+        db.AddRange(profile, expense, new WorkspaceMembership { Workspace = workspace, Profile = profile });
+        await db.SaveChangesAsync();
+        var store = new PostgresImageStore(factory);
+        var image = (await store.SaveAsync(profile.PublicId, expense.PublicId, "image/png", [1], 1, 1)).Value!;
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM workspace_memberships WHERE workspace_id = {workspace.Id} AND profile_id = {profile.Id}");
+        factory.LockExecuting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var write = Write(store, operation, profile.PublicId, expense.PublicId, image.ImageId);
+        await factory.LockExecuting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var completedBeforeCommit = await Task.WhenAny(write, Task.Delay(500)) == write;
+        await transaction.CommitAsync();
+        var result = await write.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(completedBeforeCommit);
+        Assert.Equal(ImageStoreStatus.NotFound, result);
+        await using var verify = factory.CreateDbContext();
+        var images = await verify.ExpenseImages.AsNoTracking().ToListAsync();
+        Assert.Single(images);
+        Assert.Null(images[0].Label);
+    }
+
+    [Theory]
+    [InlineData("save")]
+    [InlineData("update")]
+    [InlineData("delete")]
+    public async Task WriteInProgress_BlocksRevocationUntilCommit(string operation)
+    {
+        var factory = new Factory(await postgres.CreateEmptyDatabaseAsync());
+        await using var db = factory.CreateDbContext();
+        await db.Database.MigrateAsync();
+        var profile = new Profile { UserName = "owner", FullName = "Owner", PopiaConsentDate = DateTimeOffset.UtcNow };
+        var workspace = new Workspace { Name = "workspace" };
+        var expense = new Expense { Workspace = workspace };
+        db.AddRange(profile, expense, new WorkspaceMembership { Workspace = workspace, Profile = profile });
+        await db.SaveChangesAsync();
+        var store = new PostgresImageStore(factory);
+        var image = (await store.SaveAsync(profile.PublicId, expense.PublicId, "image/png", [1], 1, 1)).Value!;
+        var pause = new LockPause();
+        factory.Pause = pause;
+        var write = Write(store, operation, profile.PublicId, expense.PublicId, image.ImageId);
+        try
+        {
+            await pause.Locked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await db.Database.OpenConnectionAsync();
+            await db.Database.ExecuteSqlRawAsync("SET lock_timeout = '500ms'");
+            var error = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM workspace_memberships WHERE workspace_id = {workspace.Id} AND profile_id = {profile.Id}"));
+            Assert.Equal(PostgresErrorCodes.LockNotAvailable, error.SqlState);
+        }
+        finally
+        {
+            pause.Release.TrySetResult();
+        }
+        Assert.Equal(ImageStoreStatus.Success, await write.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(1, await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM workspace_memberships WHERE workspace_id = {workspace.Id} AND profile_id = {profile.Id}"));
+    }
+
+    private static async Task<ImageStoreStatus> Write(PostgresImageStore store, string operation, Guid profileId, Guid expenseId, Guid imageId) => operation switch
+    {
+        "save" => (await store.SaveAsync(profileId, expenseId, "image/png", [2], 1, 1)).Status,
+        "update" => (await store.UpdateAsync(profileId, expenseId, imageId, true, "Receipt")).Status,
+        "delete" => await store.DeleteAsync(profileId, expenseId, imageId),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation))
+    };
+
+    private sealed class LockPause
+    {
+        public TaskCompletionSource Locked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class Factory(string connectionString) : IDbContextFactory<CompanionDbContext>
     {
         public ConcurrentQueue<string> Commands { get; } = new();
+        public LockPause? Pause { get; set; }
+        public TaskCompletionSource? LockExecuting { get; set; }
         public CompanionDbContext CreateDbContext()
         {
             var builder = new DbContextOptionsBuilder<CompanionDbContext>();
             builder.UseCompanionDatabase(connectionString);
-            builder.AddInterceptors(new Recorder(Commands));
+            builder.AddInterceptors(new Recorder(Commands, Pause, LockExecuting));
             return new CompanionDbContext(builder.Options);
         }
     }
 
-    private sealed class Recorder(ConcurrentQueue<string> commands) : DbCommandInterceptor
+    private sealed class Recorder(ConcurrentQueue<string> commands, LockPause? pause, TaskCompletionSource? lockExecuting) : DbCommandInterceptor
     {
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
             commands.Enqueue(command.CommandText);
+            if (command.CommandText.Contains("FOR UPDATE OF e", StringComparison.OrdinalIgnoreCase)) lockExecuting?.TrySetResult();
             return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (pause != null && command.CommandText.Contains("FOR UPDATE OF e", StringComparison.OrdinalIgnoreCase))
+            {
+                pause.Locked.TrySetResult();
+                await pause.Release.Task.WaitAsync(cancellationToken);
+            }
+            return result;
         }
     }
 }

@@ -56,10 +56,10 @@ public sealed class ImageApiTests(PostgresFixture postgres) : IAsyncLifetime
 
     public Task DisposeAsync() { _client.Dispose(); _factory.Dispose(); return Task.CompletedTask; }
 
-    private static string Token(Profile user, JwtOptions options)
+    private static string Token(Profile user, JwtOptions options, params string[] permissions)
     {
         var token = new JwtSecurityToken(options.Issuer, options.Audience,
-            [new Claim(JwtRegisteredClaimNames.Sub, user.PublicId.ToString()), new Claim("security_stamp", user.SecurityStamp!)],
+            [new Claim(JwtRegisteredClaimNames.Sub, user.PublicId.ToString()), new Claim("security_stamp", user.SecurityStamp!), .. (permissions.Length == 0 ? new[] { "images:read", "images:write" } : permissions).Select(p => new Claim(Role.PermissionClaimType, p))],
             expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Convert.FromBase64String(options.SigningKey)), SecurityAlgorithms.HmacSha256));
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -73,6 +73,26 @@ public sealed class ImageApiTests(PostgresFixture postgres) : IAsyncLifetime
         file.Headers.ContentType = new MediaTypeHeaderValue(type);
         form.Add(file, "file", "receipt.png");
         return form;
+    }
+
+    private static byte[] PngWithPadding(int size, byte marker = 0)
+    {
+        var padding = size - Png.Length - 12;
+        var result = new byte[size];
+        Png.AsSpan(0, Png.Length - 12).CopyTo(result);
+        var chunk = result.AsSpan(Png.Length - 12);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(chunk, padding);
+        "npAd"u8.CopyTo(chunk[4..]);
+        if (padding > 0) chunk[8] = marker;
+        uint crc = 0xffffffff;
+        foreach (var b in chunk.Slice(4, padding + 4))
+        {
+            crc ^= b;
+            for (var bit = 0; bit < 8; bit++) crc = (crc >> 1) ^ (0xedb88320u & (uint)-(int)(crc & 1));
+        }
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(chunk[(padding + 8)..], ~crc);
+        Png.AsSpan(Png.Length - 12).CopyTo(chunk[(padding + 12)..]);
+        return result;
     }
 
     [Fact]
@@ -121,6 +141,44 @@ public sealed class ImageApiTests(PostgresFixture postgres) : IAsyncLifetime
         Authenticate(_ownerToken);
         Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync(imagePath)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync(imagePath + "/content")).StatusCode);
+    }
+
+    [Fact]
+    public async Task MalformedCrossTenantRequestsReturnNotFound()
+    {
+        Authenticate(_otherToken);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PostAsync(Path, new StringContent("invalid"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PostAsync(Path, Upload(new byte[5 * 1024 * 1024 + 1]))).StatusCode);
+        using var malformed = new StringContent("{", System.Text.Encoding.UTF8, "application/json");
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PatchAsync($"{Path}/{Guid.NewGuid()}", malformed)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PatchAsJsonAsync($"{Path}/{Guid.NewGuid()}", new { pageNo = "bad" })).StatusCode);
+        using var wrongType = new StringContent("invalid");
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.PatchAsync($"{Path}/{Guid.NewGuid()}", wrongType)).StatusCode);
+        Authenticate(_ownerToken);
+        using var ownerMalformed = new StringContent("{", System.Text.Encoding.UTF8, "application/json");
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PatchAsync($"{Path}/{Guid.NewGuid()}", ownerMalformed)).StatusCode);
+    }
+
+    [Fact]
+    public async Task EndpointsRequireTheirPermissionCodes()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        var owner = await db.Users.SingleAsync(user => user.FullName == "Owner");
+        var options = scope.ServiceProvider.GetRequiredService<AuthOptions>().Jwt;
+        var imagePath = $"{Path}/{Guid.NewGuid()}";
+        Authenticate(Token(owner, options, "unrelated"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync(Path)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync(imagePath + "/content")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.PostAsync(Path, Upload(Png))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.PatchAsJsonAsync(imagePath, new { pageNo = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.DeleteAsync(imagePath)).StatusCode);
+        Authenticate(Token(owner, options, "images:read"));
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync(Path)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.PostAsync(Path, Upload(Png))).StatusCode);
+        Authenticate(Token(owner, options, "images:write"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync(Path)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await _client.PostAsync(Path, Upload(Png))).StatusCode);
     }
 
     [Fact]
@@ -196,18 +254,17 @@ public sealed class ImageApiTests(PostgresFixture postgres) : IAsyncLifetime
     public async Task FileLimitAndImageCountAreEnforced()
     {
         Authenticate(_ownerToken);
-        var max = new byte[5 * 1024 * 1024];
-        Png.CopyTo(max, 0);
+        var max = PngWithPadding(5 * 1024 * 1024);
         Assert.Equal(HttpStatusCode.Created, (await _client.PostAsync(Path, new UnknownLengthContent(Upload(max)))).StatusCode);
         var oversized = new byte[max.Length + 1];
         Png.CopyTo(oversized, 0);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await _client.PostAsync(Path, new UnknownLengthContent(Upload(oversized)))).StatusCode);
         for (var i = 0; i < 9; i++)
         {
-            var bytes = Png.Concat(new[] { (byte)i }).ToArray();
+            var bytes = PngWithPadding(Png.Length + 13, (byte)i);
             Assert.Equal(HttpStatusCode.Created, (await _client.PostAsync(Path, Upload(bytes))).StatusCode);
         }
-        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsync(Path, Upload(Png.Concat(new byte[] { 10 }).ToArray()))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.PostAsync(Path, Upload(PngWithPadding(Png.Length + 13, 10)))).StatusCode);
     }
 
     private sealed class UnknownLengthContent : HttpContent

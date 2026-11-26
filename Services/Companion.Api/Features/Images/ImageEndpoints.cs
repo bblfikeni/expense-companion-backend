@@ -26,14 +26,15 @@ public static class ImageEndpoints
         group.MapPost("/", async (Guid expenseId, HttpContext context, IImageStore store, CancellationToken ct) =>
             await Upload(expenseId, context, store, configured, ct))
             .WithName("UploadExpenseImage")
-            .Accepts<ImageUpload>("multipart/form-data")
+            .RequireAuthorization("images:write")
+            .Accepts<ImageUpload>("multipart/form-data", "*/*")
             .Produces<ImageResponse>(201).Produces<ImageResponse>(200)
-            .Produces(401).ProducesProblem(400).ProducesProblem(404).ProducesProblem(409).ProducesProblem(413).ProducesProblem(415);
+            .Produces(401).Produces(403).ProducesProblem(400).ProducesProblem(404).ProducesProblem(409).ProducesProblem(413).ProducesProblem(415);
         group.MapGet("/", async (Guid expenseId, ClaimsPrincipal user, IImageStore store, CancellationToken ct) =>
         {
             var result = await store.ListAsync(Profile(user), expenseId, ct);
             return result.Status == ImageStoreStatus.Success ? Results.Ok(result.Value!.Select(ImageResponse.From)) : Error(result.Status);
-        }).WithName("ListExpenseImages").Produces<IReadOnlyList<ImageResponse>>().Produces(401).ProducesProblem(404);
+        }).WithName("ListExpenseImages").RequireAuthorization("images:read").Produces<IReadOnlyList<ImageResponse>>().Produces(401).Produces(403).ProducesProblem(404);
         group.MapGet("/{imageId:guid}/content", async (Guid expenseId, Guid imageId, HttpContext context, IImageStore store, CancellationToken ct) =>
         {
             var result = await store.GetAsync(Profile(context.User), expenseId, imageId, ct);
@@ -48,9 +49,16 @@ public static class ImageEndpoints
             if (conditions != null && conditions.Any(tag => tag.Tag == "*" || tag.Compare(etag, useStrongComparison: false)))
                 return Results.StatusCode(StatusCodes.Status304NotModified);
             return Results.File(image.Content, image.Metadata.ContentType);
-        }).WithName("GetExpenseImage").Produces(200, contentType: "image/jpeg").Produces(200, contentType: "image/png").Produces(200, contentType: "image/webp").Produces(304).Produces(401).ProducesProblem(404);
-        group.MapPatch("/{imageId:guid}", async (Guid expenseId, Guid imageId, JsonElement body, ClaimsPrincipal user, IImageStore store, CancellationToken ct) =>
+        }).WithName("GetExpenseImage").RequireAuthorization("images:read").Produces(200, contentType: "image/jpeg").Produces(200, contentType: "image/png").Produces(200, contentType: "image/webp").Produces(304).Produces(401).Produces(403).ProducesProblem(404);
+        group.MapPatch("/{imageId:guid}", async (Guid expenseId, Guid imageId, HttpContext context, IImageStore store, CancellationToken ct) =>
         {
+            var profile = Profile(context.User);
+            var access = await store.ListAsync(profile, expenseId, ct);
+            if (access.Status != ImageStoreStatus.Success) return Error(access.Status);
+            if (!context.Request.HasJsonContentType()) return Results.Problem(statusCode: 415, title: "Expected application/json");
+            JsonElement body;
+            try { body = await JsonSerializer.DeserializeAsync<JsonElement>(context.Request.Body, cancellationToken: ct); }
+            catch (JsonException) { return Results.Problem(statusCode: 400, title: "Invalid metadata"); }
             if (body.ValueKind != JsonValueKind.Object) return Results.Problem(statusCode: 400, title: "Invalid metadata");
             string? label = null;
             int? page = null;
@@ -72,18 +80,20 @@ public static class ImageEndpoints
             }
             if ((!hasLabel && !hasPage) || !ValidLabel(label) || page is < 1)
                 return Results.Problem(statusCode: 400, title: "Invalid metadata");
-            var result = await store.UpdateAsync(Profile(user), expenseId, imageId, hasLabel, label, page, ct);
+            var result = await store.UpdateAsync(profile, expenseId, imageId, hasLabel, label, page, ct);
             return result.Status == ImageStoreStatus.Success ? Results.Ok(ImageResponse.From(result.Value!)) : Error(result.Status);
-        }).WithName("UpdateExpenseImage").Accepts<ImagePatch>("application/json").Produces<ImageResponse>().Produces(401).ProducesProblem(400).ProducesProblem(404).ProducesProblem(409);
+        }).WithName("UpdateExpenseImage").RequireAuthorization("images:write").Accepts<ImagePatch>("application/json", "*/*").Produces<ImageResponse>().Produces(401).Produces(403).ProducesProblem(400).ProducesProblem(404).ProducesProblem(409).ProducesProblem(415);
         group.MapDelete("/{imageId:guid}", async (Guid expenseId, Guid imageId, ClaimsPrincipal user, IImageStore store, CancellationToken ct) =>
         {
             var status = await store.DeleteAsync(Profile(user), expenseId, imageId, ct);
             return status == ImageStoreStatus.Success ? Results.NoContent() : Error(status);
-        }).WithName("DeleteExpenseImage").Produces(204).Produces(401).ProducesProblem(404).ProducesProblem(409);
+        }).WithName("DeleteExpenseImage").RequireAuthorization("images:write").Produces(204).Produces(401).Produces(403).ProducesProblem(404).ProducesProblem(409);
     }
 
     private static async Task<IResult> Upload(Guid expenseId, HttpContext context, IImageStore store, int limit, CancellationToken ct)
     {
+        var access = await store.ListAsync(Profile(context.User), expenseId, ct);
+        if (access.Status != ImageStoreStatus.Success) return Error(access.Status);
         var requestLimit = limit + MultipartOverheadBytes;
         var maxBodySize = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
         if (maxBodySize is { IsReadOnly: false }) maxBodySize.MaxRequestBodySize = requestLimit;

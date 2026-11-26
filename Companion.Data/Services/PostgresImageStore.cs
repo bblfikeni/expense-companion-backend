@@ -137,10 +137,11 @@ public class PostgresImageStore(IDbContextFactory<CompanionDbContext> contextFac
     {
         var expenses = await db.Expenses.FromSqlInterpolated($"""
             SELECT e.* FROM expenses e
-            WHERE e.public_id = {expenseId} AND EXISTS (
-                SELECT 1 FROM workspace_memberships m JOIN profiles p ON p.id = m.profile_id
-                WHERE m.workspace_id = e.workspace_id AND p.public_id = {profileId})
+            JOIN workspace_memberships m ON m.workspace_id = e.workspace_id
+            JOIN profiles p ON p.id = m.profile_id
+            WHERE e.public_id = {expenseId} AND p.public_id = {profileId}
             FOR UPDATE OF e
+            FOR SHARE OF m
             """).ToListAsync(cancellationToken);
         return expenses.SingleOrDefault();
     }

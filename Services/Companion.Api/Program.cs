@@ -6,6 +6,7 @@ using Companion.Api.Features.Images;
 using Companion.Api.Options;
 using Companion.Api.Services;
 using Companion.Data.Extensions;
+using Companion.Data.Models;
 using Companion.Messaging;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -50,7 +51,11 @@ try
     builder.Services.AddCompanionMessaging(builder.Configuration);
     builder.Services.AddHostedService<OutboxPublisher>();
 
-    builder.Services.AddAuthorization();
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("images:read", policy => policy.RequireClaim(Role.PermissionClaimType, "images:read"));
+        options.AddPolicy("images:write", policy => policy.RequireClaim(Role.PermissionClaimType, "images:write"));
+    });
     builder.Services.AddAuthRateLimiting();
 
     var app = builder.Build();
