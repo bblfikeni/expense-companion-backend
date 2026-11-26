@@ -1,9 +1,12 @@
 using Companion.Configuration;
-using Companion.Extraction;
+using Companion.Extraction.Configuration;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Configuration.AddCompanionAppSettings(builder.Environment);
-builder.Services.AddHostedService<ExtractionWorker>();
+
+// Register extraction options, bounded to the Extracted: section of appsettings
+builder.Services.Configure<ExtractionOptions>(
+    builder.Configuration.GetSection("Extraction"));
 
 var host = builder.Build();
 host.Run();

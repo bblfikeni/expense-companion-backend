@@ -1,4 +1,6 @@
 using Companion.Extraction.Logic;
+using Companion.Extraction.Configuration;
+using Microsoft.Extensions.Configuration;
 
 namespace Companion.Api.Tests;
 
@@ -17,4 +19,16 @@ public class VatClassifierTests
 
     [Fact]
     public void MissingVatIsNotInferred() => Assert.Equal((null, false), VatClassifier.Classify("", 11500, null));
+
+    [Fact]
+    public void UsesConfiguredToleranceInCents()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["VatToleranceCents"] = "10"
+        }).Build();
+        var options = configuration.Get<ExtractionOptions>()!;
+        Assert.Equal(("Standard_15", true), VatClassifier.Classify("", 11500, 1508, options));
+        Assert.Equal((null, false), VatClassifier.Classify("", 11500, 1511, options));
+    }
 }

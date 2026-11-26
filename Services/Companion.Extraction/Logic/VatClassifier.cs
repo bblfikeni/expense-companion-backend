@@ -1,9 +1,13 @@
 using System.Text.RegularExpressions;
+using Companion.Extraction.Configuration;
 
 namespace Companion.Extraction.Logic;
 
 public static class VatClassifier
 {
+    public static (string? Classification, bool IsConsistent) Classify(
+        string? text, long? totalCents, long? vatCents, ExtractionOptions options)
+        => Classify(text, totalCents, vatCents, options.VatToleranceCents);
     public static (string? Classification, bool IsConsistent) Classify(
         string? text, long? totalCents, long? vatCents, long toleranceCents = 5)
     {

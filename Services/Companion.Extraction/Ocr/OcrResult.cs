@@ -18,34 +18,35 @@ public sealed class OcrResult
 
     /// <summary>Whether the OCR engine found usable text above a minimum threshold.</summary>
     public bool HasValidText => MeanConfidence >= 0.5 && Lines.Any(l => l.Words.Any(w => w.Confidence >= 0.5));
-}
 
-/// <summary>
-/// Per-line OCR result with words and confidence.
-/// </summary>
-public sealed class OcrLineResult
-{
-    /// <summary>Line text.</summary>
-    public string Text { get; set; } = string.Empty;
+    /// <summary>Per-line OCR result with words and confidence.</summary>
+    public sealed class OcrLineResult
+    {
+        /// <summary>Line text.</summary>
+        public string Text { get; set; } = string.Empty;
 
-    /// <summary>Mean confidence for this line.</summary>
-    public double Confidence { get; set; }
+        /// <summary>Mean confidence for this line.</summary>
+        public double Confidence { get; set; }
 
-    /// <summary>Words in this line with bounding boxes.</summary>
-    public ICollection<OcrWordResult> Words { get; set; } = new List<OcrWordResult>();
-}
+        /// <summary>Words in this line with bounding boxes.</summary>
+        public ICollection<OcrWordResult> Words { get; set; } = new List<OcrWordResult>();
 
-/// <summary>
-/// Per-word OCR result with bounding box and confidence.
-/// </summary>
-public sealed class OcrWordResult
-{
-    /// <summary>Word text.</summary>
-    public string Text { get; set; } = string.Empty;
+        /// <summary>Page number this line belongs to (for multi-page receipts).</summary>
+        public int PageNo { get; set; }
+    }
 
-    /// <summary>Confidence for this word (0.0 to 1.0).</summary>
-    public double Confidence { get; set; }
+    /// <summary>
+    /// Per-word OCR result with bounding box and confidence.
+    /// </summary>
+    public sealed class OcrWordResult
+    {
+        /// <summary>Word text.</summary>
+        public string Text { get; set; } = string.Empty;
 
-    /// <summary>Bounding box (normalized coordinates).</summary>
-    public RectangleF BoundingBox { get; set; }
+        /// <summary>Confidence for this word (0.0 to 1.0).</summary>
+        public double Confidence { get; set; }
+
+        /// <summary>Bounding box (normalized coordinates).</summary>
+        public RectangleF BoundingBox { get; set; }
+    }
 }
