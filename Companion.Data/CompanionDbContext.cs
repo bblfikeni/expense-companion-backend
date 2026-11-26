@@ -157,6 +157,8 @@ public class CompanionDbContext
 
             entity.HasIndex(e => new { e.ExpenseId, e.Status });
 
+            entity.HasIndex(e => new { e.ExpenseId, e.ImageSetHash }).IsUnique();
+
             });
 
         builder.Entity<ExpenseImageResult>(entity =>

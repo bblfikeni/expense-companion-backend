@@ -35,6 +35,14 @@ namespace Companion.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("completed_at");
 
+                    b.Property<double?>("DateConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("date_confidence");
+
+                    b.Property<double?>("DocumentValidityConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("document_validity_confidence");
+
                     b.Property<string>("ExpenseDate")
                         .HasColumnType("varchar(50)")
                         .HasColumnName("expense_date");
@@ -83,17 +91,37 @@ namespace Companion.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("total_amount_cents");
 
+                    b.Property<double?>("TotalConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("total_confidence");
+
                     b.Property<long?>("VatAmountCents")
                         .HasColumnType("bigint")
                         .HasColumnName("vat_amount_cents");
+
+                    b.Property<double?>("VatAmountConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("vat_amount_confidence");
 
                     b.Property<string>("VatClassification")
                         .HasColumnType("varchar(30)")
                         .HasColumnName("vat_classification");
 
+                    b.Property<string>("VatNumber")
+                        .HasColumnType("text")
+                        .HasColumnName("vat_number");
+
+                    b.Property<double?>("VatNumberConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("vat_number_confidence");
+
                     b.Property<string>("Vendor")
                         .HasColumnType("varchar(255)")
                         .HasColumnName("vendor");
+
+                    b.Property<double?>("VendorConfidence")
+                        .HasColumnType("double precision")
+                        .HasColumnName("vendor_confidence");
 
                     b.HasKey("Id")
                         .HasName("pk_expense_extractions");
@@ -101,6 +129,10 @@ namespace Companion.Data.Migrations
                     b.HasIndex("ExpensePublicId")
                         .IsUnique()
                         .HasDatabaseName("ix_expense_extractions_expense_public_id");
+
+                    b.HasIndex("ExpenseId", "ImageSetHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expense_extractions_expense_id_image_set_hash");
 
                     b.HasIndex("ExpenseId", "Status")
                         .HasDatabaseName("ix_expense_extractions_expense_id_status");

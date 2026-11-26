@@ -44,6 +44,27 @@ public sealed class ExpenseExtraction
     /// <summary>VAT amount in cents (extracted value).</summary>
     public long? VatAmountCents { get; set; }
 
+    /// <summary>VAT registration number extracted from the receipt.</summary>
+    public string? VatNumber { get; set; }
+
+    /// <summary>Confidence in the vendor field.</summary>
+    public double? VendorConfidence { get; set; }
+
+    /// <summary>Confidence in the date field.</summary>
+    public double? DateConfidence { get; set; }
+
+    /// <summary>Confidence in the total field.</summary>
+    public double? TotalConfidence { get; set; }
+
+    /// <summary>Confidence in the VAT amount field.</summary>
+    public double? VatAmountConfidence { get; set; }
+
+    /// <summary>Confidence in the VAT number field.</summary>
+    public double? VatNumberConfidence { get; set; }
+
+    /// <summary>Confidence in the document validity field.</summary>
+    public double? DocumentValidityConfidence { get; set; }
+
     /// <summary>VAT classification.</summary>
     public string? VatClassification { get; set; } // Standard_15 / Zero_Rated / Exempt / Not_Claimable / Second_Hand / null
 
