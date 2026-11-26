@@ -7,17 +7,31 @@ namespace Companion.Api.Tests;
 public class OcrLoggingTests
 {
     [Fact]
-    public async Task PlaceholderReportsProgressWithoutLoggingImagePath()
+    public async Task FailedExtractionLogsProgressWithoutLoggingImagePath()
     {
         var logger = new RecordingLogger();
         var engine = new TesseractOcrEngine(logger: logger);
+        const string imagePath = "sensitive-receipt-path.jpg";
 
-        var result = await engine.ExtractAsync("sensitive-receipt-path.jpg");
+        await Assert.ThrowsAnyAsync<Exception>(() => engine.ExtractAsync(imagePath));
 
-        Assert.Empty(result.Text);
         Assert.Contains(logger.Messages, message => message.Contains("started"));
-        Assert.Contains(logger.Messages, message => message.Contains("not implemented"));
-        Assert.DoesNotContain(logger.Messages, message => message.Contains("sensitive-receipt-path"));
+        Assert.Contains(logger.Messages, message => message.Contains("failed"));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(imagePath));
+    }
+
+    [Fact]
+    public async Task PreCanceledExtractionDoesNotInitializeNativeEngine()
+    {
+        var logger = new RecordingLogger();
+        var engine = new TesseractOcrEngine(logger: logger);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            engine.ExtractAsync("sensitive-receipt-path.jpg", cancellation.Token));
+
+        Assert.Empty(logger.Messages);
     }
 
     private sealed class RecordingLogger : ILogger<TesseractOcrEngine>

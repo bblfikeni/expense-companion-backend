@@ -152,6 +152,10 @@ public class CompanionDbContext
 
             entity.Property(e => e.CompletedAt).HasColumnName("completed_at").HasColumnType("timestamp with time zone");
 
+            entity.Property(e => e.AttemptCount).HasColumnName("attempt_count");
+
+            entity.Property(e => e.NextAttemptAt).HasColumnName("next_attempt_at").HasColumnType("timestamp with time zone");
+
             // Indexes
             entity.HasIndex(e => e.ExpensePublicId).IsUnique();
 
@@ -214,7 +218,9 @@ public class CompanionDbContext
             entity.ToTable("expenses");
             entity.Property(e => e.PublicId).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.Status).HasMaxLength(50);
+            entity.Property(e => e.CaptureRequestId).HasColumnName("capture_request_id");
             entity.HasIndex(e => e.PublicId).IsUnique();
+            entity.HasIndex(e => e.CaptureRequestId).IsUnique();
             entity.HasOne(e => e.Workspace).WithMany().HasForeignKey(e => e.WorkspaceId).OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<ExpenseImage>(entity =>

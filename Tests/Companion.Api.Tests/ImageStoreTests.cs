@@ -57,6 +57,15 @@ public sealed class ImageStoreTests(PostgresFixture postgres)
         Assert.Equal(4, concurrent.Count(r => r.Status == ImageStoreStatus.AlreadyExists));
         var first = concurrent[0].Value!;
         Assert.All(concurrent, r => Assert.Equal(first.ImageId, r.Value!.ImageId));
+        await db.Entry(expense).ReloadAsync();
+        Assert.Equal("Uploaded", expense.Status);
+        expense.Status = "None";
+        await db.SaveChangesAsync();
+        var duplicateRetry = await store.SaveAsync(profile.PublicId, expense.PublicId, "image/png", [1], 10, 20, "Receipt");
+        Assert.Equal(ImageStoreStatus.AlreadyExists, duplicateRetry.Status);
+        await db.Entry(expense).ReloadAsync();
+        Assert.Equal("Uploaded", expense.Status);
+        Assert.Single(await db.ExpenseImages.ToListAsync());
         var second = (await store.SaveAsync(profile.PublicId, expense.PublicId, "image/png", [2], 10, 20, "ProofOfPayment")).Value!;
         Assert.Equal(ImageStoreStatus.NotFound, (await store.ListAsync(Guid.NewGuid(), expense.PublicId)).Status);
         Assert.Equal(ImageStoreStatus.NotFound, (await store.GetAsync(Guid.NewGuid(), expense.PublicId, first.ImageId)).Status);
@@ -77,11 +86,18 @@ public sealed class ImageStoreTests(PostgresFixture postgres)
         Assert.Contains("SELECT e.data", factory.Commands.Last(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(ImageStoreStatus.Success, await store.DeleteAsync(profile.PublicId, expense.PublicId, second.ImageId));
         Assert.Equal(1, Assert.Single((await store.ListAsync(profile.PublicId, expense.PublicId)).Value!).PageNo);
+        await db.Entry(expense).ReloadAsync();
+        Assert.Equal("Uploaded", expense.Status);
+        Assert.Equal(ImageStoreStatus.Success, await store.DeleteAsync(profile.PublicId, expense.PublicId, first.ImageId));
+        await db.Entry(expense).ReloadAsync();
+        Assert.Equal("None", expense.Status);
         expense.Status = "Processing";
         await db.SaveChangesAsync();
         Assert.Equal(ImageStoreStatus.InvalidStatus, (await store.SaveAsync(profile.PublicId, expense.PublicId, "image/png", [4], 1, 1)).Status);
         Assert.Equal(ImageStoreStatus.InvalidStatus, await store.DeleteAsync(profile.PublicId, expense.PublicId, first.ImageId));
         Assert.Equal(ImageStoreStatus.InvalidStatus, (await store.UpdateAsync(profile.PublicId, expense.PublicId, first.ImageId, true, null)).Status);
+        await db.Entry(expense).ReloadAsync();
+        Assert.Equal("Processing", expense.Status);
     }
 
     [Fact]

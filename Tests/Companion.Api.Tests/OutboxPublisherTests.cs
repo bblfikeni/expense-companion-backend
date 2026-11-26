@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Companion.Api.Services;
 using Companion.Api.Tests.Infrastructure;
@@ -87,6 +88,74 @@ public sealed class OutboxPublisherTests(PostgresFixture postgres)
         finally { await publisher.StopAsync(default); }
     }
 
+    [Fact]
+    public async Task ReceiptUploadedEvent_IsDeserializedAndPublished()
+    {
+        using var host = CompanionHosts.Build(await postgres.CreateEmptyDatabaseAsync());
+        await host.ApplyCompanionMigrationsAsync();
+        var expected = new ReceiptUploadedEvent
+        {
+            ExpensePublicId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid().ToString(),
+            RequestedAt = DateTimeOffset.UtcNow,
+            EventId = Guid.NewGuid(),
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+        };
+        await SeedAsync(host.Services, ReceiptMessage(expected));
+        var bus = new RecordingBus();
+        using var publisher = CreatePublisher(host.Services, bus);
+        await publisher.StartAsync(default);
+        try
+        {
+            await WaitUntilAsync(host.Services, rows => rows[0].PublishedAt is not null);
+            var actual = Assert.IsType<ReceiptUploadedEvent>(Assert.Single(bus.PublishedMessages));
+            Assert.Equal(expected.ExpensePublicId, actual.ExpensePublicId);
+            Assert.Equal(expected.CorrelationId, actual.CorrelationId);
+            Assert.Equal(expected.RequestedAt, actual.RequestedAt);
+            Assert.Equal(expected.EventId, actual.EventId);
+            Assert.Equal(expected.OccurredAtUtc, actual.OccurredAtUtc);
+        }
+        finally { await publisher.StopAsync(default); }
+    }
+
+    [Fact]
+    public async Task ReceiptUploadedEvent_BrokerFailureRetriesOutboxMessage()
+    {
+        using var host = CompanionHosts.Build(await postgres.CreateEmptyDatabaseAsync());
+        await host.ApplyCompanionMigrationsAsync();
+        var clock = new AdjustableClock();
+        var receiptMessage = ReceiptMessage(new ReceiptUploadedEvent
+        {
+            ExpensePublicId = Guid.NewGuid(),
+            EventId = Guid.NewGuid(),
+            RequestedAt = clock.GetUtcNow(),
+            OccurredAtUtc = clock.GetUtcNow(),
+        });
+        receiptMessage.Attempts = 10;
+        await SeedAsync(host.Services, receiptMessage);
+        var bus = new RecordingBus(failFirstReceiptUpload: true);
+        using var publisher = CreatePublisher(host.Services, bus, clock);
+        await publisher.StartAsync(default);
+        try
+        {
+            await WaitUntilAsync(host.Services, rows => rows[0].Attempts == 11 && rows[0].NextAttemptAt is not null);
+            var retrying = (await ReadRowsAsync(host.Services))[0];
+            Assert.Null(retrying.PublishedAt);
+            Assert.Null(retrying.FailedAt);
+            Assert.Equal(clock.GetUtcNow().AddMinutes(5), retrying.NextAttemptAt);
+            Assert.Equal(1, bus.ReceiptUploadAttempts);
+
+            clock.Advance(TimeSpan.FromMinutes(5));
+            await WaitUntilAsync(host.Services, rows => rows[0].PublishedAt is not null);
+
+            var row = Assert.Single(await ReadRowsAsync(host.Services));
+            Assert.Equal(11, row.Attempts);
+            Assert.Equal(2, bus.ReceiptUploadAttempts);
+            Assert.Single(bus.PublishedMessages);
+        }
+        finally { await publisher.StopAsync(default); }
+    }
+
     private sealed class AdjustableClock : TimeProvider
     {
         private long _utcTicks = DateTimeOffset.UtcNow.UtcTicks;
@@ -94,15 +163,22 @@ public sealed class OutboxPublisherTests(PostgresFixture postgres)
         public void Advance(TimeSpan amount) => Interlocked.Add(ref _utcTicks, amount.Ticks);
     }
 
-    private static OutboxPublisher CreatePublisher(IServiceProvider services, ICompanionMessageBus bus)
+    private static OutboxPublisher CreatePublisher(IServiceProvider services, ICompanionMessageBus bus,
+        TimeProvider? clock = null)
         => new(services.GetRequiredService<IServiceScopeFactory>(), bus,
             new CompanionMessagingOptions { OutboxPollingIntervalMilliseconds = 10 },
-            TimeProvider.System, NullLogger<OutboxPublisher>.Instance);
+            clock ?? TimeProvider.System, NullLogger<OutboxPublisher>.Instance);
 
     private static OutboxMessage ValidMessage(string email) => new()
     {
         Type = nameof(EmailVerificationRequested),
         Payload = JsonSerializer.Serialize(new EmailVerificationRequested { Email = email, OtpCode = "123456" }),
+    };
+
+    private static OutboxMessage ReceiptMessage(ReceiptUploadedEvent message) => new()
+    {
+        Type = nameof(ReceiptUploadedEvent),
+        Payload = JsonSerializer.Serialize(message),
     };
 
     private static async Task SeedAsync(IServiceProvider services, params OutboxMessage[] messages)
@@ -133,9 +209,30 @@ public sealed class OutboxPublisherTests(PostgresFixture postgres)
 
     private sealed class RecordingBus : ICompanionMessageBus
     {
+        private readonly bool _failFirstReceiptUpload;
+        private int _receiptUploadAttempts;
+
+        public RecordingBus(bool failFirstReceiptUpload = false)
+            => _failFirstReceiptUpload = failFirstReceiptUpload;
+
+        public ConcurrentQueue<object> PublishedMessages { get; } = new();
+        public int ReceiptUploadAttempts => Volatile.Read(ref _receiptUploadAttempts);
+
         public Task PublishAsync<T>(T message, CancellationToken cancellationToken = default) where T : class
-            => message is EmailVerificationRequested { Email: "fail@example.com" }
-                ? Task.FromException(new IOException("Injected broker failure")) : Task.CompletedTask;
+        {
+            if (message is ReceiptUploadedEvent)
+            {
+                var attempt = Interlocked.Increment(ref _receiptUploadAttempts);
+                if (_failFirstReceiptUpload && attempt == 1)
+                    return Task.FromException(new IOException("Injected broker failure"));
+            }
+
+            if (message is EmailVerificationRequested { Email: "fail@example.com" })
+                return Task.FromException(new IOException("Injected broker failure"));
+
+            PublishedMessages.Enqueue(message);
+            return Task.CompletedTask;
+        }
 
         public Task<IAsyncDisposable> SubscribeAsync<T>(string subscriptionId,
             Func<T, CancellationToken, Task> handler, CancellationToken cancellationToken = default) where T : class

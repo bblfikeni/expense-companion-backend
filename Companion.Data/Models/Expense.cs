@@ -7,4 +7,5 @@ public class Expense
     public int WorkspaceId { get; set; }
     public Workspace Workspace { get; set; } = null!;
     public string Status { get; set; } = "None";
+    public Guid? CaptureRequestId { get; set; }
 }

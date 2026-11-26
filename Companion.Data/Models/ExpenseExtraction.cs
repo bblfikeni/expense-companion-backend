@@ -76,4 +76,10 @@ public sealed class ExpenseExtraction
 
     /// <summary>When extraction completed (UTC).</summary>
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>Number of technical processing attempts.</summary>
+    public int AttemptCount { get; set; }
+
+    /// <summary>When the next technical retry may run.</summary>
+    public DateTimeOffset? NextAttemptAt { get; set; }
 }

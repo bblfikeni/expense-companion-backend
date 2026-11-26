@@ -2,6 +2,7 @@ using Companion.Configuration;
 using System.Security.Claims;
 using Companion.Api.Dtos;
 using Companion.Api.Features.Auth;
+using Companion.Api.Features.Expenses;
 using Companion.Api.Features.Images;
 using Companion.Api.Options;
 using Companion.Api.Services;
@@ -78,6 +79,8 @@ try
     app.MapHealthChecks("/health");
 
     app.MapAuthEndpoints();
+    app.MapExpenseCaptureEndpoints();
+    app.MapExpenseExtractionEndpoints();
     app.MapImageEndpoints(builder.Configuration);
 
     app.MapGet("/api/profile",

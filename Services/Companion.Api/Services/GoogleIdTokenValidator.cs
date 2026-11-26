@@ -25,6 +25,8 @@ public sealed class GoogleIdTokenValidator : IGoogleIdTokenValidator
     public async Task<GoogleIdentity?> ValidateAsync(string idToken, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(_clientId))
+            return null;
 
         try
         {

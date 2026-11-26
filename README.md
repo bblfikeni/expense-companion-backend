@@ -52,17 +52,16 @@ docker compose up -d        # postgres, rabbitmq, seq
 openssl rand -base64 48
 openssl rand -base64 48
 # Use the first value for Auth:Jwt:SigningKey and the second for Auth:Otps:Pepper.
-# Set Auth:Google:ClientId to your Google OAuth web client ID and update
-# ConnectionStrings:CompanionDb if you changed the Postgres credentials.
+# Update ConnectionStrings:CompanionDb to match your PostgreSQL instance.
 # Set RabbitMq:ConnectionString in both ignored API and Notification
 # appsettings.Development.json files to the same RabbitMQ connection string.
-# In the Notification worker, set Resend__ApiKey and Resend__From (a verified sender).
+# For real email delivery, set Resend__ApiKey and Resend__From (a verified sender).
 
 dotnet build SarsCompanion.slnx -c Release
 dotnet test
 dotnet run --project Services/Companion.Api      # http://localhost:5101/health
 dotnet run --project Services/Companion.Realtime # http://localhost:5102/health
-dotnet run --project Services/Companion.Notification
+DOTNET_ENVIRONMENT=Development dotnet run --project Services/Companion.Notification
 ```
 
 Local endpoints: Postgres `localhost:5432`, RabbitMQ management
@@ -82,13 +81,47 @@ The test suite includes PostgreSQL integration tests using Testcontainers, so
 Docker must be running when executing the full suite.
 
 To use live authentication in `web/`, set `VITE_COMPANION_API_URL=http://localhost:5101`
-in the web environment and restart Vite. Set `Cors__AllowedOrigin` on the API to the
-exact web origin. Leave the API URL unset to use the public demo. For Google, set
+in `web/.env.development.local` and restart Vite. `bun run dev:mobile` uses the HTTPS
+development proxy. For direct HTTP development, set `Cors__AllowedOrigin` on the API
+to the exact web origin. Leave the API URL unset to use the public demo. For Google, set
 `VITE_GOOGLE_CLIENT_ID` to the same OAuth web client ID as `Auth__Google__ClientId`
 and register the web origin as an authorised JavaScript origin. Registration and
 password recovery require the Notification worker to deliver codes. Live sign-in
 lasts until the access token expires or the page reloads. The workspace still
-shows sample expense records.
+shows sample expense records. In live mode the receipt gallery shows the signed-in
+user’s uploaded images from workspaces they can still access.
+
+`GET /api/images` lists those uploads and requires `images:read`. It returns image
+metadata with the expense ID and a `nextBefore` cursor. The default page contains
+up to 12 images. Pass `before=<nextBefore>` for the next page. Fetch image bytes
+with the same bearer token from `/api/expenses/{expenseId}/images/{public_id}/content`.
+
+For local verification and reset codes, use a loopback RabbitMQ broker with the
+dedicated `companion-dev-mail` virtual host. On a local Docker Compose broker, create
+the virtual host and grant the local RabbitMQ user access.
+
+```bash
+docker compose exec rabbitmq rabbitmqctl add_vhost companion-dev-mail
+docker compose exec rabbitmq rabbitmqctl set_permissions -p companion-dev-mail YOUR_RABBITMQ_USER '.*' '.*' '.*'
+```
+
+Set `virtualHost=companion-dev-mail` in `RabbitMq:ConnectionString` for the local API
+and Notification worker, and restart the API. Use the same virtual host for any
+other local workers that share this API's event stream. Run Notification in
+Development with a private pickup directory under the Git-ignored `secrets/` folder.
+
+```bash
+DOTNET_ENVIRONMENT=Development Channels__Email__PickupDirectory="$PWD/secrets/dev-mail" \
+  dotnet run --project Services/Companion.Notification
+```
+
+Open the resulting `.eml` file for your test address and copy the code into the
+browser. The worker creates a private directory when needed and rejects existing
+directories that grant access to other users. Use mode `0700` on Unix, with no
+extended ACL on macOS, or restrict the Windows ACL to your account and system
+administrators. Delete test mail when
+finished. To use Resend, remove the pickup setting, move the API and worker to
+their regular virtual host, and configure a verified sender and API key.
 
 ## Current implementation and remaining work
 

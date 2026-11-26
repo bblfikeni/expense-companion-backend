@@ -78,7 +78,8 @@ public sealed class OutboxPublisher(
             message.Attempts++;
             var now = clock.GetUtcNow();
             var permanentFailure = exception is JsonException or UnsupportedOutboxMessageException;
-            message.FailedAt = permanentFailure || message.Attempts >= MaxAttempts ? now : null;
+            var receiptEvent = message.Type == nameof(ReceiptUploadedEvent);
+            message.FailedAt = permanentFailure || (!receiptEvent && message.Attempts >= MaxAttempts) ? now : null;
             message.NextAttemptAt = message.FailedAt is null
                 ? now.AddSeconds(Math.Min(300, Math.Pow(2, message.Attempts - 1)))
                 : null;
@@ -105,6 +106,8 @@ public sealed class OutboxPublisher(
                 messageBus.PublishAsync(Deserialize<EmailVerificationRequested>(payload), cancellationToken),
             nameof(PasswordResetRequested) =>
                 messageBus.PublishAsync(Deserialize<PasswordResetRequested>(payload), cancellationToken),
+            nameof(ReceiptUploadedEvent) =>
+                messageBus.PublishAsync(Deserialize<ReceiptUploadedEvent>(payload), cancellationToken),
             _ => throw new UnsupportedOutboxMessageException(messageType),
         };
 

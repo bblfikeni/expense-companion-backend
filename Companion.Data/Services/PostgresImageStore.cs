@@ -25,7 +25,16 @@ public class PostgresImageStore(IDbContextFactory<CompanionDbContext> contextFac
             if (expense == null) return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.NotFound);
             if (!Editable(expense)) return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.InvalidStatus);
             var existing = await MetadataQuery(db.ExpenseImages.AsNoTracking().Where(i => i.ExpenseId == expense.Id && i.Sha256 == hash)).SingleOrDefaultAsync(cancellationToken);
-            if (existing != null) return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.AlreadyExists, existing);
+            if (existing != null)
+            {
+                if (expense.Status == "None")
+                {
+                    expense.Status = "Uploaded";
+                    await db.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.AlreadyExists, existing);
+            }
             var images = await db.ExpenseImages.Where(i => i.ExpenseId == expense.Id).OrderBy(i => i.PageNo).ToListAsync(cancellationToken);
             if (images.Count >= MaxImages) return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.LimitReached);
             var page = pageNo ?? images.Count + 1;
@@ -48,6 +57,7 @@ public class PostgresImageStore(IDbContextFactory<CompanionDbContext> contextFac
                 Blob = new ExpenseImageBlob { Content = content }
             };
             db.ExpenseImages.Add(image);
+            expense.Status = "Uploaded";
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new ImageStoreResult<ImageMetadata>(ImageStoreStatus.Success, Metadata(image, profileId));
@@ -90,6 +100,30 @@ public class PostgresImageStore(IDbContextFactory<CompanionDbContext> contextFac
         return new(ImageStoreStatus.Success, images);
     }
 
+    public async Task<ImageStoreResult<IReadOnlyList<UploadedImageMetadata>>> ListUploadedAsync(
+        Guid profileId, Guid? before, int take, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var expenses = AuthorizedExpenses(db, profileId);
+        var images = db.ExpenseImages.AsNoTracking()
+            .Where(i => i.UploadedByProfile.PublicId == profileId && expenses.Any(e => e.Id == i.ExpenseId));
+        if (before.HasValue)
+        {
+            var cursor = await images.Where(i => i.PublicId == before.Value)
+                .Select(i => new { i.CreatedAt, i.Id }).SingleOrDefaultAsync(cancellationToken);
+            if (cursor is null) return new(ImageStoreStatus.NotFound);
+            images = images.Where(i => i.CreatedAt < cursor.CreatedAt ||
+                (i.CreatedAt == cursor.CreatedAt && i.Id < cursor.Id));
+        }
+
+        var items = await images.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id)
+            .Take(take).Select(i => new UploadedImageMetadata(i.Expense.PublicId,
+                new ImageMetadata(i.PublicId, i.PageNo, i.ContentType, i.SizeBytes, i.Sha256, i.Label,
+                    i.Width, i.Height, i.CreatedAt, profileId)))
+            .ToListAsync(cancellationToken);
+        return new(ImageStoreStatus.Success, items);
+    }
+
     public async Task<ImageStoreResult<ImageContent>> GetAsync(Guid profileId, Guid expenseId, Guid imageId, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -118,14 +152,18 @@ public class PostgresImageStore(IDbContextFactory<CompanionDbContext> contextFac
             db.ExpenseImages.Remove(image);
             images.Remove(image);
             for (var index = 0; index < images.Count; index++) images[index].PageNo = index + 1;
+            if (images.Count == 0) expense.Status = "None";
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return ImageStoreStatus.Success;
         });
     }
 
+    private static IQueryable<Expense> AuthorizedExpenses(CompanionDbContext db, Guid profileId) =>
+        db.Expenses.AsNoTracking().Where(e => db.WorkspaceMemberships.Any(m => m.WorkspaceId == e.WorkspaceId && m.Profile.PublicId == profileId));
+
     private static IQueryable<Expense> AuthorizedExpenses(CompanionDbContext db, Guid profileId, Guid expenseId) =>
-        db.Expenses.AsNoTracking().Where(e => e.PublicId == expenseId && db.WorkspaceMemberships.Any(m => m.WorkspaceId == e.WorkspaceId && m.Profile.PublicId == profileId));
+        AuthorizedExpenses(db, profileId).Where(e => e.PublicId == expenseId);
 
     private static IQueryable<ExpenseImage> AuthorizedImages(CompanionDbContext db, Guid profileId, Guid expenseId)
     {

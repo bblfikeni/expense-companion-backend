@@ -9,6 +9,9 @@ namespace Companion.Extraction.Configuration;
 [Serializable]
 public class ExtractionOptions
 {
+    public const int ApiMaximumImagesPerExpense = 10;
+
+    public static bool HasCompatibleImageLimit(int maximumImages) => maximumImages == ApiMaximumImagesPerExpense;
     /// <summary>
     /// When false, the ExtractionWorker must not subscribe or process any messages.
     /// When true, normal extraction processing occurs.
@@ -36,10 +39,10 @@ public class ExtractionOptions
     public int RetryBackoffBaseSeconds { get; set; } = 30;
 
     /// <summary>
-    /// Maximum number of images per expense (1-10).
+    /// Maximum number of images per expense. This must match the gateway upload limit.
     /// Default: 10.
     /// </summary>
-    public int MaxImagesPerExpense { get; set; } = 10;
+    public int MaxImagesPerExpense { get; set; } = ApiMaximumImagesPerExpense;
 
     /// <summary>
     /// Absolute VAT classification tolerance in cents. Default: 5.

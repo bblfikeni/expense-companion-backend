@@ -168,8 +168,6 @@ public static class AuthServiceCollectionExtensions
 
         if (string.IsNullOrWhiteSpace(auth.Jwt.Issuer) || string.IsNullOrWhiteSpace(auth.Jwt.Audience))
             throw new InvalidOperationException("Auth:Jwt:Issuer and Auth:Jwt:Audience are required.");
-        if (string.IsNullOrWhiteSpace(auth.Google.ClientId))
-            throw new InvalidOperationException("Auth:Google:ClientId is required.");
         if (auth.Otps.ExpiresInMinutes <= 0 || auth.Otps.MaxAttempts <= 0 || auth.Otps.ResendCooldownInSeconds < 0)
             throw new InvalidOperationException("OTP expiry and attempt limit must be positive; cooldown must be nonnegative.");
 

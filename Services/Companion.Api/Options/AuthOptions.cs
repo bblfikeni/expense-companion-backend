@@ -8,7 +8,7 @@ namespace Companion.Api.Options;
 /// </summary>
 public sealed class AuthOptions
 {
-    /// <summary>Google OAuth client ID used to validate Google ID tokens.</summary>
+    /// <summary>Optional Google OAuth configuration. A blank client ID disables Google sign-in.</summary>
     public GoogleOptions Google { get; set; } = new();
 
     /// <summary>OTP service tuning (expiry, attempt cap, resend cooldown).</summary>

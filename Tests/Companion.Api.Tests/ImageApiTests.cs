@@ -10,6 +10,7 @@ using Companion.Api.Features.Images;
 using Companion.Api.Tests.Infrastructure;
 using Companion.Data;
 using Companion.Data.Models;
+using Companion.Events;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -141,6 +142,159 @@ public sealed class ImageApiTests(PostgresFixture postgres) : IAsyncLifetime
         Authenticate(_ownerToken);
         Assert.Equal(HttpStatusCode.NoContent, (await _client.DeleteAsync(imagePath)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync(imagePath + "/content")).StatusCode);
+    }
+
+    [Fact]
+    public async Task UploadedImages_ArePaginatedAndScopedToUploaderAndCurrentWorkspace()
+    {
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _client.GetAsync("/api/images")).StatusCode);
+        Authenticate(_ownerToken);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.GetAsync("/api/images?limit=0")).StatusCode);
+
+        var first = await _client.PostAsync(Path, Upload(Png));
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        var firstId = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("public_id").GetGuid();
+
+        var created = await _client.PostAsJsonAsync("/api/expenses", new { requestId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var expense = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("expenseId").GetGuid();
+        var second = await _client.PostAsync($"/api/expenses/{expense}/images", Upload(Png));
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var secondId = (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("public_id").GetGuid();
+
+        var firstPageResponse = await _client.GetAsync("/api/images?limit=1");
+        Assert.True(firstPageResponse.Headers.CacheControl?.NoStore);
+        var firstPage = await firstPageResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var latest = Assert.Single(firstPage.GetProperty("items").EnumerateArray());
+        Assert.Equal(expense, latest.GetProperty("expenseId").GetGuid());
+        Assert.Equal(secondId, latest.GetProperty("image").GetProperty("public_id").GetGuid());
+        var before = firstPage.GetProperty("nextBefore").GetGuid();
+        Assert.Equal(secondId, before);
+
+        var nextPage = await _client.GetFromJsonAsync<JsonElement>($"/api/images?limit=1&before={before}");
+        var earlier = Assert.Single(nextPage.GetProperty("items").EnumerateArray());
+        Assert.Equal(firstId, earlier.GetProperty("image").GetProperty("public_id").GetGuid());
+        Assert.Equal(JsonValueKind.Null, nextPage.GetProperty("nextBefore").ValueKind);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        var workspace = await db.Expenses.Where(e => e.PublicId == _expense).Select(e => e.Workspace).SingleAsync();
+        var other = await db.Users.SingleAsync(u => u.FullName == "Other");
+        Authenticate(Token(other, scope.ServiceProvider.GetRequiredService<AuthOptions>().Jwt, "images:write"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.GetAsync("/api/images")).StatusCode);
+        var membership = new WorkspaceMembership { Workspace = workspace, Profile = other };
+        db.WorkspaceMemberships.Add(membership);
+        await db.SaveChangesAsync();
+
+        Authenticate(_otherToken);
+        Assert.Single((await _client.GetFromJsonAsync<JsonElement[]>(Path))!);
+        Assert.Empty((await _client.GetFromJsonAsync<JsonElement>("/api/images")).GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync($"/api/images?before={before}")).StatusCode);
+
+        var otherImage = await _client.PostAsync(Path, Upload(Jpeg, "image/jpeg"));
+        Assert.Equal(HttpStatusCode.Created, otherImage.StatusCode);
+        var otherPage = await _client.GetFromJsonAsync<JsonElement>("/api/images");
+        Assert.Single(otherPage.GetProperty("items").EnumerateArray());
+
+        db.WorkspaceMemberships.Remove(membership);
+        await db.SaveChangesAsync();
+        Assert.Empty((await _client.GetFromJsonAsync<JsonElement>("/api/images")).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task CaptureSubmission_RequiresImagesAndWritesOneOutboxEvent()
+    {
+        Authenticate(_ownerToken);
+        var requestId = Guid.NewGuid();
+        var initialized = await _client.PostAsJsonAsync("/api/expenses", new { requestId });
+        Assert.Equal(HttpStatusCode.Created, initialized.StatusCode);
+        var response = await initialized.Content.ReadFromJsonAsync<JsonElement>();
+        var expenseId = response.GetProperty("expenseId").GetGuid();
+        var capturePath = $"/api/expenses/{expenseId}";
+        Assert.Equal("None", response.GetProperty("status").GetString());
+        var repeated = await Task.WhenAll(Enumerable.Range(0, 4)
+            .Select(_ => _client.PostAsJsonAsync("/api/expenses", new { requestId })));
+        foreach (var duplicate in repeated)
+        {
+            Assert.Equal(HttpStatusCode.OK, duplicate.StatusCode);
+            var duplicateBody = await duplicate.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(expenseId, duplicateBody.GetProperty("expenseId").GetGuid());
+        }
+
+        Assert.Equal(HttpStatusCode.Conflict,
+            (await _client.PostAsync(capturePath + "/submit", new StringContent(string.Empty))).StatusCode);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+            Assert.Empty(await db.OutboxMessages.ToListAsync());
+        }
+
+        Assert.Equal(HttpStatusCode.Created,
+            (await _client.PostAsync(capturePath + "/images", Upload(Png))).StatusCode);
+        var submitted = await _client.PostAsync(capturePath + "/submit", new StringContent(string.Empty));
+        Assert.Equal(HttpStatusCode.Accepted, submitted.StatusCode);
+        var submittedResponse = await submitted.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(expenseId, submittedResponse.GetProperty("expenseId").GetGuid());
+        Assert.Equal("Processing", submittedResponse.GetProperty("status").GetString());
+
+        Authenticate(_otherToken);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await _client.PostAsync(capturePath + "/submit", new StringContent(string.Empty))).StatusCode);
+        Authenticate(_ownerToken);
+        Assert.Equal(HttpStatusCode.Accepted,
+            (await _client.PostAsync(capturePath + "/submit", new StringContent(string.Empty))).StatusCode);
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        var expense = await verifyDb.Expenses.SingleAsync(item => item.PublicId == expenseId);
+        Assert.Equal("Processing", expense.Status);
+        Assert.Equal(1, await verifyDb.Expenses.CountAsync(item => item.CaptureRequestId == requestId));
+        var outbox = Assert.Single(await verifyDb.OutboxMessages.ToListAsync());
+        Assert.Equal(nameof(ReceiptUploadedEvent), outbox.Type);
+        var message = JsonSerializer.Deserialize<ReceiptUploadedEvent>(outbox.Payload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(message);
+        Assert.Equal(expenseId, message.ExpensePublicId);
+        Assert.NotEqual(Guid.Empty, message.EventId);
+        Assert.False(outbox.Payload.Contains("data", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CaptureInitialization_ConcurrentRequestsCreateOneExpense()
+    {
+        Authenticate(_ownerToken);
+        var requestId = Guid.NewGuid();
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5)
+            .Select(_ => _client.PostAsJsonAsync("/api/expenses", new { requestId })));
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Created);
+        Assert.Equal(4, responses.Count(response => response.StatusCode == HttpStatusCode.OK));
+        var ids = new List<Guid>();
+        foreach (var response in responses)
+            ids.Add((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("expenseId").GetGuid());
+        Assert.Single(ids.Distinct());
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        Assert.Equal(1, await db.Expenses.CountAsync(e => e.CaptureRequestId == requestId));
+    }
+
+    [Fact]
+    public async Task CaptureSubmission_RollsBackStatusWhenOutboxInsertFails()
+    {
+        Authenticate(_ownerToken);
+        Assert.Equal(HttpStatusCode.Created, (await _client.PostAsync(Path, Upload(Png))).StatusCode);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CompanionDbContext>();
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE FUNCTION reject_receipt_outbox() RETURNS trigger AS $$
+            BEGIN RAISE EXCEPTION 'injected outbox failure'; END; $$ LANGUAGE plpgsql;
+            CREATE TRIGGER reject_receipt_outbox BEFORE INSERT ON outbox_messages
+            FOR EACH ROW EXECUTE FUNCTION reject_receipt_outbox();
+            """);
+        var response = await _client.PostAsync($"/api/expenses/{_expense}/submit", new StringContent(string.Empty));
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        db.ChangeTracker.Clear();
+        Assert.Equal("Uploaded", (await db.Expenses.SingleAsync(e => e.PublicId == _expense)).Status);
+        Assert.Empty(await db.OutboxMessages.ToListAsync());
     }
 
     [Fact]

@@ -76,6 +76,9 @@ public sealed class AuthenticationService : IAuthenticationService
             if (!create.Succeeded)
                 return RegisterResult.Failed(email);
 
+            // Assign a default workspace to the new account
+            await AssignDefaultWorkspaceAsync(profile, ct);
+
             await QueueCodeAsync(profile, OtpPurpose.EmailVerification, ct);
             return RegisterResult.Fresh(email);
         }, cancellationToken);
@@ -216,6 +219,8 @@ public sealed class AuthenticationService : IAuthenticationService
             }
 
             var token = await BuildTokenAsync(profile, ct);
+            // Assign a default workspace to the new account
+            await AssignDefaultWorkspaceAsync(profile, ct);
             return LoginResult.Authenticated(token, expiresInSeconds: 900, isNewUser: true);
         }, cancellationToken);
     }
@@ -365,6 +370,15 @@ public sealed class AuthenticationService : IAuthenticationService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    private async Task AssignDefaultWorkspaceAsync(Profile profile, CancellationToken cancellationToken = default)
+    {
+        var workspaceName = profile.FullName?.Trim() ?? "User";
+        var workspace = new Workspace { PublicId = Guid.NewGuid(), Name = $"{workspaceName}-Workspace" };
+        _db.Workspaces.Add(workspace);
+        _db.WorkspaceMemberships.Add(new WorkspaceMembership { Workspace = workspace, Profile = profile });
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task<string> BuildTokenAsync(Profile profile, CancellationToken cancellationToken)
     {
         var roleNames = await _users.GetRolesAsync(profile);
@@ -408,5 +422,28 @@ public sealed class AuthenticationService : IAuthenticationService
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    /// <summary>
+    /// Assigns a default workspace to existing profiles that don't have one.
+    /// Used for backfilling workspace memberships for existing accounts.
+    /// </summary>
+    public async Task BackfillWorkspaceMembershipsAsync(CancellationToken cancellationToken = default)
+    {
+        var profiles = await _db.Users.ToListAsync(cancellationToken);
+        foreach (var profile in profiles)
+        {
+            // Check if profile already has a workspace membership
+            var hasMembership = await _db.WorkspaceMemberships
+                .AnyAsync(m => m.ProfileId == profile.Id, cancellationToken);
+            if (hasMembership) continue;
+
+            // Assign a default workspace
+            var workspaceName = $"{profile.FullName?.Trim() ?? "User"}-Workspace";
+            var workspace = new Workspace { PublicId = Guid.NewGuid(), Name = workspaceName };
+            _db.Workspaces.Add(workspace);
+            _db.WorkspaceMemberships.Add(new WorkspaceMembership { Workspace = workspace, Profile = profile });
+        }
+        await _db.SaveChangesAsync(cancellationToken);
     }
 }

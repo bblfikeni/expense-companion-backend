@@ -31,6 +31,10 @@ namespace Companion.Data.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<Guid?>("CaptureRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("capture_request_id");
+
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
@@ -50,6 +54,10 @@ namespace Companion.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_expenses");
 
+                    b.HasIndex("CaptureRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expenses_capture_request_id");
+
                     b.HasIndex("PublicId")
                         .IsUnique()
                         .HasDatabaseName("ix_expenses_public_id");
@@ -68,6 +76,10 @@ namespace Companion.Data.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_count");
 
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone")
@@ -103,6 +115,10 @@ namespace Companion.Data.Migrations
                     b.Property<bool?>("IsValidTaxInvoice")
                         .HasColumnType("boolean")
                         .HasColumnName("is_valid_tax_invoice");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
 
                     b.Property<double>("OverallConfidence")
                         .HasColumnType("double precision")

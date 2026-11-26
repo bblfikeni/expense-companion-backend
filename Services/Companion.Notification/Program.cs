@@ -8,7 +8,7 @@ builder.Configuration.AddCompanionAppSettings(builder.Environment);
 // Keep its error-queue handling and log auth delivery failures in NotificationWorker.
 builder.Logging.AddFilter("EasyNetQ.Consumer.DefaultConsumeErrorStrategy", LogLevel.None);
 builder.Services.AddCompanionMessaging(builder.Configuration);
-builder.Services.AddNotificationEmail(builder.Configuration);
+builder.Services.AddNotificationEmail(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<NotificationTemplateRenderer>();
 builder.Services.AddHostedService<NotificationWorker>();
 

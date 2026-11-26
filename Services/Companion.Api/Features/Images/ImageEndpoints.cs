@@ -22,6 +22,26 @@ public static class ImageEndpoints
         if (cacheMaxAge < 0)
             throw new InvalidOperationException("Images:CacheMaxAgeSeconds must be non-negative.");
 
+        app.MapGet("/api/images", async (Guid? before, int? limit, HttpContext context, IImageStore store, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var pageSize = limit ?? 12;
+            if (pageSize is < 1 or > 50)
+                return Results.Problem(statusCode: 400, title: "Image page size must be between 1 and 50.");
+            if (!Guid.TryParse(context.User.FindFirstValue(ClaimTypes.NameIdentifier), out var profileId))
+                return Results.Unauthorized();
+
+            var result = await store.ListUploadedAsync(profileId, before, pageSize + 1, ct);
+            if (result.Status != ImageStoreStatus.Success) return Error(result.Status);
+
+            var images = result.Value!;
+            var items = images.Take(pageSize)
+                .Select(item => new UploadedImageResponse(item.ExpenseId, ImageResponse.From(item.Image))).ToArray();
+            Guid? nextBefore = images.Count > pageSize ? images[pageSize - 1].Image.ImageId : null;
+            return Results.Ok(new UploadedImagePage(items, nextBefore));
+        }).WithName("ListUploadedImages").RequireAuthorization("images:read").WithTags("Images")
+            .Produces<UploadedImagePage>().ProducesProblem(400).Produces(401).Produces(403).ProducesProblem(404);
+
         var group = app.MapGroup("/api/expenses/{expenseId:guid}/images").RequireAuthorization().WithTags("Images");
         group.MapPost("/", async (Guid expenseId, HttpContext context, IImageStore store, CancellationToken ct) =>
             await Upload(expenseId, context, store, configured, ct))
@@ -158,6 +178,9 @@ public static class ImageEndpoints
         _ => Results.Problem(statusCode: 500, title: "Image store error")
     };
 }
+
+public sealed record UploadedImageResponse(Guid ExpenseId, ImageResponse Image);
+public sealed record UploadedImagePage(IReadOnlyList<UploadedImageResponse> Items, Guid? NextBefore);
 
 public sealed record ImageResponse([property: JsonPropertyName("public_id")] Guid PublicId, int PageNo, string ContentType, int SizeBytes, string Sha256, string? Label, int Width, int Height, DateTimeOffset CreatedAt, Guid UploadedByProfileId)
 {
