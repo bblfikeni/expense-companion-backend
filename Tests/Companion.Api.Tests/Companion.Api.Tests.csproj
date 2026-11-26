@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\Companion.Configuration\Companion.Configuration.csproj" />
     <ProjectReference Include="..\..\Services\Companion.Api\Companion.Api.csproj" />
     <ProjectReference Include="..\..\Services\Companion.Notification\Companion.Notification.csproj" />
+    <ProjectReference Include="..\..\Services\Companion.Extraction\Companion.Extraction.csproj" />
     <ProjectReference Include="..\..\Companion.Data\Companion.Data.csproj" />
   </ItemGroup>
 
