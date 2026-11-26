@@ -98,7 +98,7 @@ public sealed class CompanionPersistenceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Schema_HasNoCheckConstraints()
+    public async Task Schema_HasOnlyExpectedCheckConstraints()
     {
         var connectionString = await _postgres.CreateEmptyDatabaseAsync();
         using var host = CompanionHosts.Build(connectionString, withIdentity: true);
@@ -110,10 +110,11 @@ public sealed class CompanionPersistenceTests : IAsyncLifetime
         await connection.OpenAsync();
 
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE c.contype = 'c' AND n.nspname = 'public'";
-        var checkCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
-
-        Assert.Equal(0, checkCount);
+        command.CommandText = "SELECT c.conname FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE c.contype = 'c' AND n.nspname = 'public' ORDER BY c.conname";
+        var names = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) names.Add(reader.GetString(0));
+        Assert.Equal(new[] { "ck_expense_image_blobs_size", "ck_expense_images_dimensions", "ck_expense_images_label", "ck_expense_images_page_no", "ck_expense_images_sha256", "ck_expense_images_size" }, names);
     }
 
     [Fact]

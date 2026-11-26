@@ -22,6 +22,44 @@ namespace Companion.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Companion.Data.Models.Expense", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("public_id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("status");
+
+                    b.Property<int>("WorkspaceId")
+                        .HasColumnType("integer")
+                        .HasColumnName("workspace_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_expenses");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expenses_public_id");
+
+                    b.HasIndex("WorkspaceId")
+                        .HasDatabaseName("ix_expenses_workspace_id");
+
+                    b.ToTable("expenses", (string)null);
+                });
+
             modelBuilder.Entity("Companion.Data.Models.ExpenseExtraction", b =>
                 {
                     b.Property<int>("Id")
@@ -138,6 +176,114 @@ namespace Companion.Data.Migrations
                         .HasDatabaseName("ix_expense_extractions_expense_id_status");
 
                     b.ToTable("expense_extractions", (string)null);
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("ExpenseId")
+                        .HasColumnType("integer")
+                        .HasColumnName("expense_id");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("integer")
+                        .HasColumnName("height");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("label");
+
+                    b.Property<int>("PageNo")
+                        .HasColumnType("integer")
+                        .HasColumnName("page_no");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("public_id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sha256");
+
+                    b.Property<int>("SizeBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<int>("UploadedByProfileId")
+                        .HasColumnType("integer")
+                        .HasColumnName("uploaded_by_profile_id");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("integer")
+                        .HasColumnName("width");
+
+                    b.HasKey("Id")
+                        .HasName("pk_expense_images");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expense_images_public_id");
+
+                    b.HasIndex("UploadedByProfileId")
+                        .HasDatabaseName("ix_expense_images_uploaded_by_profile_id");
+
+                    b.HasIndex("ExpenseId", "Sha256")
+                        .IsUnique()
+                        .HasDatabaseName("ix_expense_images_expense_id_sha256");
+
+                    b.ToTable("expense_images", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_expense_images_dimensions", "width > 0 AND height > 0");
+
+                            t.HasCheckConstraint("ck_expense_images_label", "label IS NULL OR label IN ('Receipt', 'ProofOfPayment')");
+
+                            t.HasCheckConstraint("ck_expense_images_page_no", "page_no BETWEEN 1 AND 10");
+
+                            t.HasCheckConstraint("ck_expense_images_sha256", "sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("ck_expense_images_size", "size_bytes BETWEEN 1 AND 5242880");
+                        });
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImageBlob", b =>
+                {
+                    b.Property<int>("ExpenseImageId")
+                        .HasColumnType("integer")
+                        .HasColumnName("expense_image_id");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("data");
+
+                    b.HasKey("ExpenseImageId")
+                        .HasName("pk_expense_image_blobs");
+
+                    b.ToTable("expense_image_blobs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_expense_image_blobs_size", "octet_length(data) BETWEEN 1 AND 5242880");
+                        });
                 });
 
             modelBuilder.Entity("Companion.Data.Models.ExpenseImageResult", b =>
@@ -454,6 +600,56 @@ namespace Companion.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Companion.Data.Models.Workspace", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("public_id")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
+                    b.HasKey("Id")
+                        .HasName("pk_workspaces");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_workspaces_public_id");
+
+                    b.ToTable("workspaces", (string)null);
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.WorkspaceMembership", b =>
+                {
+                    b.Property<int>("WorkspaceId")
+                        .HasColumnType("integer")
+                        .HasColumnName("workspace_id");
+
+                    b.Property<int>("ProfileId")
+                        .HasColumnType("integer")
+                        .HasColumnName("profile_id");
+
+                    b.HasKey("WorkspaceId", "ProfileId")
+                        .HasName("pk_workspace_memberships");
+
+                    b.HasIndex("ProfileId")
+                        .HasDatabaseName("ix_workspace_memberships_profile_id");
+
+                    b.ToTable("workspace_memberships", (string)null);
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<int>", b =>
                 {
                     b.Property<int>("Id")
@@ -593,6 +789,51 @@ namespace Companion.Data.Migrations
                     b.ToTable("profile_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Companion.Data.Models.Expense", b =>
+                {
+                    b.HasOne("Companion.Data.Models.Workspace", "Workspace")
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_expenses_workspaces_workspace_id");
+
+                    b.Navigation("Workspace");
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImage", b =>
+                {
+                    b.HasOne("Companion.Data.Models.Expense", "Expense")
+                        .WithMany()
+                        .HasForeignKey("ExpenseId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_expense_images_expenses_expense_id");
+
+                    b.HasOne("Companion.Data.Models.Profile", "UploadedByProfile")
+                        .WithMany()
+                        .HasForeignKey("UploadedByProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_expense_images_users_uploaded_by_profile_id");
+
+                    b.Navigation("Expense");
+
+                    b.Navigation("UploadedByProfile");
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImageBlob", b =>
+                {
+                    b.HasOne("Companion.Data.Models.ExpenseImage", "Image")
+                        .WithOne("Blob")
+                        .HasForeignKey("Companion.Data.Models.ExpenseImageBlob", "ExpenseImageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_expense_image_blobs_expense_images_expense_image_id");
+
+                    b.Navigation("Image");
+                });
+
             modelBuilder.Entity("Companion.Data.Models.ExpenseImageResult", b =>
                 {
                     b.HasOne("Companion.Data.Models.ExpenseExtraction", "Extraction")
@@ -615,6 +856,27 @@ namespace Companion.Data.Migrations
                         .HasConstraintName("fk_otp_codes_users_profile_id");
 
                     b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.WorkspaceMembership", b =>
+                {
+                    b.HasOne("Companion.Data.Models.Profile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_workspace_memberships_users_profile_id");
+
+                    b.HasOne("Companion.Data.Models.Workspace", "Workspace")
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_workspace_memberships_workspaces_workspace_id");
+
+                    b.Navigation("Profile");
+
+                    b.Navigation("Workspace");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<int>", b =>
@@ -672,6 +934,12 @@ namespace Companion.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_profile_tokens_profiles_user_id");
+                });
+
+            modelBuilder.Entity("Companion.Data.Models.ExpenseImage", b =>
+                {
+                    b.Navigation("Blob")
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -195,6 +195,55 @@ public class CompanionDbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        builder.Entity<Workspace>(entity =>
+        {
+            entity.ToTable("workspaces");
+            entity.Property(e => e.PublicId).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.Name).HasMaxLength(255);
+            entity.HasIndex(e => e.PublicId).IsUnique();
+        });
+        builder.Entity<WorkspaceMembership>(entity =>
+        {
+            entity.ToTable("workspace_memberships");
+            entity.HasKey(e => new { e.WorkspaceId, e.ProfileId });
+            entity.HasOne(e => e.Workspace).WithMany().HasForeignKey(e => e.WorkspaceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Profile).WithMany().HasForeignKey(e => e.ProfileId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<Expense>(entity =>
+        {
+            entity.ToTable("expenses");
+            entity.Property(e => e.PublicId).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.Status).HasMaxLength(50);
+            entity.HasIndex(e => e.PublicId).IsUnique();
+            entity.HasOne(e => e.Workspace).WithMany().HasForeignKey(e => e.WorkspaceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        builder.Entity<ExpenseImage>(entity =>
+        {
+            entity.ToTable("expense_images", table =>
+            {
+                table.HasCheckConstraint("ck_expense_images_page_no", "page_no BETWEEN 1 AND 10");
+                table.HasCheckConstraint("ck_expense_images_size", "size_bytes BETWEEN 1 AND 5242880");
+                table.HasCheckConstraint("ck_expense_images_sha256", "sha256 ~ '^[0-9a-f]{64}$'");
+                table.HasCheckConstraint("ck_expense_images_dimensions", "width > 0 AND height > 0");
+                table.HasCheckConstraint("ck_expense_images_label", "label IS NULL OR label IN ('Receipt', 'ProofOfPayment')");
+            });
+            entity.Property(e => e.PublicId).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.ContentType).HasMaxLength(100);
+            entity.Property(e => e.Sha256).HasMaxLength(64);
+            entity.Property(e => e.Label).HasMaxLength(255);
+            entity.HasIndex(e => e.PublicId).IsUnique();
+            entity.HasIndex(e => new { e.ExpenseId, e.Sha256 }).IsUnique();
+            entity.HasOne(e => e.Expense).WithMany().HasForeignKey(e => e.ExpenseId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.UploadedByProfile).WithMany().HasForeignKey(e => e.UploadedByProfileId).OnDelete(DeleteBehavior.Restrict);
+        });
+        builder.Entity<ExpenseImageBlob>(entity =>
+        {
+            entity.ToTable("expense_image_blobs", table => table.HasCheckConstraint("ck_expense_image_blobs_size", "octet_length(data) BETWEEN 1 AND 5242880"));
+            entity.HasKey(e => e.ExpenseImageId);
+            entity.Property(e => e.Content).HasColumnName("data");
+            entity.HasOne(e => e.Image).WithOne(e => e.Blob).HasForeignKey<ExpenseImageBlob>(e => e.ExpenseImageId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         SeedPlatformAdmin(builder);
     }
 
@@ -242,4 +291,10 @@ public class CompanionDbContext
     public DbSet<ExpenseExtraction> ExpenseExtractions => Set<ExpenseExtraction>();
 
     public DbSet<ExpenseImageResult> ExpenseImageResults => Set<ExpenseImageResult>();
+
+    public DbSet<Workspace> Workspaces => Set<Workspace>();
+    public DbSet<WorkspaceMembership> WorkspaceMemberships => Set<WorkspaceMembership>();
+    public DbSet<Expense> Expenses => Set<Expense>();
+    public DbSet<ExpenseImage> ExpenseImages => Set<ExpenseImage>();
+    public DbSet<ExpenseImageBlob> ExpenseImageBlobs => Set<ExpenseImageBlob>();
 }

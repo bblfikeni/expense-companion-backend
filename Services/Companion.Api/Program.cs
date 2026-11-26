@@ -2,6 +2,7 @@ using Companion.Configuration;
 using System.Security.Claims;
 using Companion.Api.Dtos;
 using Companion.Api.Features.Auth;
+using Companion.Api.Features.Images;
 using Companion.Api.Options;
 using Companion.Api.Services;
 using Companion.Data.Extensions;
@@ -72,6 +73,7 @@ try
     app.MapHealthChecks("/health");
 
     app.MapAuthEndpoints();
+    app.MapImageEndpoints(builder.Configuration);
 
     app.MapGet("/api/profile",
         async (Guid profilePublicId, ClaimsPrincipal user, IAuthenticationService auth, CancellationToken ct) =>

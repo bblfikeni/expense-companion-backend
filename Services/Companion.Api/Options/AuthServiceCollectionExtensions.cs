@@ -114,7 +114,8 @@ public static class AuthenticationServiceCollectionExtensions
             {
                 policy.WithOrigins(corsOrigin)
                     .AllowAnyHeader()
-                    .WithMethods("GET", "PUT", "POST", "DELETE", "OPTIONS");
+                    .WithMethods("GET", "PUT", "POST", "PATCH", "DELETE", "OPTIONS")
+                    .WithExposedHeaders("ETag", "Location");
             });
         });
 

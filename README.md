@@ -146,6 +146,14 @@ shows sample expense records.
 
 ## Notes
 
+- Image storage decision: the MVP stores receipt image metadata and bytes in
+  separate PostgreSQL tables, not Cloudflare R2. This supersedes direct client
+  uploads to R2 using presigned URLs; PostgreSQL Large Objects are not used.
+  The frontend must upload images through the API and fetch content with its
+  bearer token before rendering blob URLs. Extraction must read metadata and
+  bytes from the database using a narrowly scoped read-only role and compute
+  image set hashes from ordered image hashes. Monitor database and backup size.
+
 - Every service calls `builder.Configuration.AddCompanionAppSettings(builder.Environment)`
   from `Companion.Configuration`. It loads `appsettings.json` and optional
   `appsettings.{EnvironmentName}.json` from the service content root, reusing

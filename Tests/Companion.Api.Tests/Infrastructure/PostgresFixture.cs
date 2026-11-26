@@ -34,6 +34,9 @@ public sealed class PostgresFixture : IAsyncLifetime
         return new NpgsqlConnectionStringBuilder(_container.GetConnectionString())
         {
             Database = database,
+            // Each database is used by one test; retaining a pool per database
+            // exhausts the shared container's connection limit during the suite.
+            Pooling = false,
         }.ConnectionString;
     }
 }

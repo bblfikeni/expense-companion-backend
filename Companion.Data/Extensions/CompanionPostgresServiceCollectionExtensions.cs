@@ -1,5 +1,7 @@
 using Companion.Data;
 using Companion.Data.Extensions;
+using Companion.Core.Interfaces;
+using Companion.Data.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
@@ -56,6 +58,7 @@ public static class CompanionPostgresServiceCollectionExtensions
         services.AddDbContext<CompanionDbContext>(ConfigureOptions,
             optionsLifetime: ServiceLifetime.Singleton);
         services.AddDbContextFactory<CompanionDbContext>(ConfigureOptions);
+        services.AddScoped<IImageStore, PostgresImageStore>();
 
         // Connectivity only. It answers "can we reach Postgres", not "is the schema
         // current" — migration gating is a separate, later concern.
