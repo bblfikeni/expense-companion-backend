@@ -2,7 +2,7 @@
 
 South African expense tracking PWA. This repository is the .NET solution
 root: one gateway API, event-driven workers sharing a Postgres schema, and a
-separate Next.js client in `web/`. The client uses this project as its backend
+separate TanStack Start client in `web/`. The client uses this project as its backend
 through `Services/Companion.Api`.
 
 ## Stack
@@ -24,12 +24,12 @@ through `Services/Companion.Api`.
 | `Companion.Data/` | Models, repositories, migrations over Core. |
 | `Services/Companion.Api/` | Gateway API — `http://localhost:5101` |
 | `Services/Companion.Realtime/` | SignalR host — `http://localhost:5102` |
-| `Services/Companion.Extraction/` | Worker |
+| `Services/Companion.Extraction/` | Receipt parsing components; worker not registered |
 | `Services/Companion.Notification/` | Worker |
 | `Services/Companion.Reporting/` | Worker |
 | `Services/Companion.Scheduler/` | Worker |
-| `Tests/Companion.Api.Tests/` | API smoke tests |
-| `web/` | Next.js client (git submodule: `bblfikeni/biz-zen-guard`) |
+| `Tests/Companion.Api.Tests/` | API, integration and extraction tests |
+| `web/` | TanStack Start client (git submodule: `bblfikeni/biz-zen-guard`) |
 
 Services never reference each other. Central package management is enabled in
 `Directory.Packages.props`; solution-wide build settings live in
@@ -38,7 +38,8 @@ Services never reference each other. Central package management is enabled in
 ## Prerequisites
 
 - .NET SDK 10
-- Docker (for local infrastructure only)
+- Docker (for local infrastructure and integration tests)
+- `dotnet-ef` tool (for EF Core migration commands)
 
 ## Getting started
 
@@ -66,6 +67,19 @@ dotnet run --project Services/Companion.Notification
 
 Local endpoints: Postgres `localhost:5432`, RabbitMQ management
 `http://localhost:15672`, Seq `http://localhost:5341`.
+
+EF Core design-time commands read the connection string from the environment.
+Set `ConnectionStrings__CompanionDb` to a connection string for your local
+database (do not commit credentials), then run, for example:
+
+```bash
+dotnet ef migrations list --project Companion.Data
+dotnet ef migrations has-pending-model-changes --project Companion.Data
+dotnet ef database update --project Companion.Data
+```
+
+The test suite includes PostgreSQL integration tests using Testcontainers, so
+Docker must be running when executing the full suite.
 
 To use live authentication in `web/`, set `VITE_COMPANION_API_URL=http://localhost:5101`
 in the web environment and restart Vite. Set `Cors__AllowedOrigin` on the API to the
@@ -117,7 +131,14 @@ shows sample expense records.
   environment variables or their ignored `appsettings.Development.json` files.
   Outbox payloads contain plaintext delivery codes; access control and a retention
   policy are required for deployment.
-- Extraction, Reporting and Scheduler workers currently idle.
+- Extraction has receipt merging and field parsers for vendor, date, total, VAT,
+  VAT number and tax-invoice wording. `FieldParser` composes them and returns
+  per-field OCR confidence values. Confidence matching is text-based, so repeated
+  tokens elsewhere in a receipt can affect a field's score.
+- The extraction schema includes a unique `(expense_id, image_set_hash)` index,
+  VAT number and six per-field confidence columns. The extraction host has no
+  registered worker or receipt subscription; parsing is not an active pipeline.
+  Reporting and Scheduler workers currently idle.
 - Realtime has no SignalR hubs.
 - Seq is available in Docker, but application logging currently goes to the console.
 - Worker schema verification exists in the data library and is not wired into the
