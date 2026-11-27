@@ -1,0 +1,11 @@
+services:
+  extraction:
+    build:
+      context: ../..
+      dockerfile: Services/Companion.Extraction/Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      Extraction__Enabled: ${COMPANION_EXTRACTION_ENABLED:-false}
+      ConnectionStrings__ExtractionDb: ${COMPANION_EXTRACTION_DB:-}
+      RabbitMq__ConnectionString: ${COMPANION_EXTRACTION_RABBITMQ:-}

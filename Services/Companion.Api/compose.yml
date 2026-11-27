@@ -1,0 +1,16 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: Services/Companion.Api/Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__CompanionDb: ${COMPANION_API_DB:-}
+      RabbitMq__ConnectionString: ${COMPANION_API_RABBITMQ:-}
+      Auth__Jwt__SigningKey: ${COMPANION_JWT_SIGNING_KEY:-}
+      Auth__Otps__Pepper: ${COMPANION_OTP_PEPPER:-}
+      Auth__Google__ClientId: ${COMPANION_GOOGLE_CLIENT_ID:-}
+      Cors__AllowedOrigin: ${COMPANION_WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:${COMPANION_API_PORT:-8080}:8080"

@@ -67,6 +67,66 @@ DOTNET_ENVIRONMENT=Development dotnet run --project Services/Companion.Notificat
 Local endpoints: Postgres `localhost:5432`, RabbitMQ management
 `http://localhost:15672`, Seq `http://localhost:5341`.
 
+To run only the web container, run:
+
+```bash
+docker compose -f web/compose.yml up -d --build
+```
+
+Only the web container is started; the API and infrastructure must be run
+separately. Open `http://localhost:3000`. The browser uses
+`COMPANION_WEB_API_URL` (default `http://localhost:8080`), not Docker's internal
+`api` hostname. Configure the external API's CORS allowed origin to the exact
+browser origin (default `http://localhost:3000`). Set `COMPANION_WEB_PORT` and
+`COMPANION_WEB_API_URL` in the environment as needed. Vite embeds the API URL, mock-mode flag and
+Google client ID at build time, so rebuild with `--build` after changing them.
+Google client IDs are public; do not put secrets in frontend build arguments.
+The default infrastructure-only `docker compose up -d` remains unchanged.
+
+### Standalone API and extraction containers
+
+The API and extraction service also have independent Compose files. Both build
+from the repository root and connect to externally managed PostgreSQL and
+RabbitMQ services; neither Compose file starts or configures those dependencies.
+From the repository root, provide the API connection strings and secrets in the
+environment (or a git-ignored `.env` file), then start the gateway:
+
+```bash
+COMPANION_API_DB='Host=host.docker.internal;Port=5432;Database=companion;Username=companion;Password=YOUR_PASSWORD' \
+COMPANION_API_RABBITMQ='host=host.docker.internal;username=companion;password=YOUR_PASSWORD' \
+COMPANION_JWT_SIGNING_KEY='YOUR_RANDOM_SIGNING_KEY' \
+COMPANION_OTP_PEPPER='YOUR_RANDOM_OTP_PEPPER' \
+docker compose -f Services/Companion.Api/compose.yml up -d --build
+```
+
+The API binds to `127.0.0.1:8080` by default (`COMPANION_API_PORT` overrides the
+host port), applies pending database migrations at startup, and exposes
+`/health`. Its database account must therefore be allowed to apply migrations.
+Set `COMPANION_WEB_ORIGIN` to the exact browser origin when it differs from
+`http://localhost:3000`. Container-to-host URLs vary by Docker platform; use
+`host.docker.internal` where supported or provide another address reachable
+from the container.
+
+The extraction image includes Tesseract and the English and Afrikaans language
+data. Its standalone Compose service defaults to `Extraction:Enabled=false` and
+does not connect to either dependency while disabled. To start that disabled
+service:
+
+```bash
+docker compose -f Services/Companion.Extraction/compose.yml up -d --build
+```
+
+To configure an intentional extraction deployment, provide
+`COMPANION_EXTRACTION_DB` and `COMPANION_EXTRACTION_RABBITMQ`; set
+`COMPANION_EXTRACTION_ENABLED=true` only after database access, broker routing,
+and the consumer deployment have been arranged. Do not put credentials in the
+Compose file or image. Verify the bundled language data with:
+
+```bash
+docker compose -f Services/Companion.Extraction/compose.yml run --rm \
+  --entrypoint tesseract extraction --list-langs
+```
+
 EF Core design-time commands read the connection string from the environment.
 Set `ConnectionStrings__CompanionDb` to a connection string for your local
 database (do not commit credentials), then run, for example:

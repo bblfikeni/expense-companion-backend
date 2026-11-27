@@ -17,7 +17,7 @@ public sealed class NotificationWorker(
         var sender = senders.SingleOrDefault();
         if (sender is null)
         {
-            logger.LogWarning("No notification sender is registered. Consumption is disabled; delivery events remain pending.");
+            logger.LogWarning("""No notification sender is registered. Consumption is disabled; delivery events remain pending.""");
             return;
         }
 
@@ -30,7 +30,7 @@ public sealed class NotificationWorker(
             (request, ct) => ProcessAsync(sender, request.EventId, request.ExpiresAtUtc, () => templates.Render(request), ct),
             stoppingToken);
 
-        logger.LogInformation("Subscribed to email verification and password reset events.");
+        logger.LogInformation(" Subscribed to email verification and password reset events.");
         await Task.Delay(Timeout.Infinite, stoppingToken);
     }
 
