@@ -9,6 +9,7 @@ using Companion.Events;
 using Companion.Extraction;
 using Companion.Extraction.Configuration;
 using Companion.Extraction.Ocr;
+using Companion.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,13 +33,13 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             var workspace = new Workspace { Name = "Recovery" };
             db.AddRange(profile, workspace, new WorkspaceMembership { Workspace = workspace, Profile = profile });
             await db.SaveChangesAsync();
-            foreach (var name in new[] { "missing", "expired", "retry", "active", "future", "completed", "failed", "draft", "noimage" })
+            foreach (var name in new[] { "missing", "expired", "retry", "active", "future", "completed", "failed", "cap", "draft", "noimage", "fresh" })
             {
                 var expense = new Expense { WorkspaceId = workspace.Id, Status = name == "draft" ? "None" : "Processing" };
                 db.Expenses.Add(expense);
                 await db.SaveChangesAsync();
                 ids[name] = expense.PublicId;
-                db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, now));
+                db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, name == "fresh" ? now : now.AddMinutes(-10)));
                 if (name == "noimage") continue;
                 var bytes = Encoding.UTF8.GetBytes(name);
                 var imageHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
@@ -48,13 +49,14 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
                     ContentType = "image/png", SizeBytes = bytes.Length, Sha256 = imageHash,
                     Width = 1, Height = 1, CreatedAt = now, Blob = new ExpenseImageBlob { Content = bytes },
                 });
-                if (name is not ("missing" or "draft"))
+                if (name is not ("missing" or "draft" or "fresh"))
                     db.ExpenseExtractions.Add(new ExpenseExtraction
                     {
                         ExpenseId = expense.Id, ExpensePublicId = expense.PublicId,
                         ImageSetHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(imageHash))),
                         Status = name switch { "retry" or "future" => "RetryPending", "completed" => "NeedsReview", "failed" => "Failed", _ => "Processing" },
                         StartedAt = name == "active" ? now : now.AddHours(-1),
+                        AttemptCount = name == "cap" ? 3 : 1,
                         NextAttemptAt = name == "future" ? now.AddHours(1) : name == "retry" ? now.AddMinutes(-1) : null,
                         CompletedAt = name == "completed" ? now : null,
                         ReviewRequired = true,
@@ -66,7 +68,9 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         var ocr = new CountingOcr();
         var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true });
         var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System, NullLogger<ReceiptExtractionProcessor>.Instance);
-        var worker = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
+        var bus = new RecoveryBus(processor);
+        var worker = new ReceiptRecoveryWorker(factory, processor, bus, TimeProvider.System, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
         await worker.StartAsync(CancellationToken.None);
         try
         {
@@ -91,6 +95,11 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         Assert.Equal("Processing", rows[ids["active"]].Status);
         Assert.Equal("RetryPending", rows[ids["future"]].Status);
         Assert.Equal("Failed", rows[ids["failed"]].Status);
+        Assert.Equal("Failed", rows[ids["cap"]].Status);
+        Assert.Equal(3, rows[ids["cap"]].AttemptCount);
+        Assert.False(rows.ContainsKey(ids["fresh"]));
+        Assert.Equal(new[] { ids["missing"], ids["expired"], ids["retry"] }.Order(),
+            bus.Published.Select(message => message.ExpensePublicId).Order());
         Assert.False(rows.ContainsKey(ids["draft"]));
         Assert.False(rows.ContainsKey(ids["noimage"]));
         Assert.Equal(3, ocr.Calls);
@@ -101,7 +110,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
     public async Task DisabledSweepDoesNotAccessDatabase()
     {
         var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = false });
-        var worker = new ReceiptRecoveryWorker(null!, null!, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
+        var worker = new ReceiptRecoveryWorker(null!, null!, null!, TimeProvider.System, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
         await worker.SweepOnceAsync(CancellationToken.None);
         await worker.StartAsync(CancellationToken.None);
         await worker.ExecuteTask!;
@@ -123,11 +132,11 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             for (var i = 0; i < 100; i++) db.Expenses.Add(new Expense { WorkspaceId = workspace.Id, Status = "Processing" });
             await db.SaveChangesAsync();
             foreach (var existing in await db.Expenses.ToListAsync())
-                db.OutboxMessages.Add(ReceiptEvent(existing.PublicId, DateTimeOffset.UtcNow));
+                db.OutboxMessages.Add(ReceiptEvent(existing.PublicId, DateTimeOffset.UtcNow.AddMinutes(-10)));
             var expense = new Expense { WorkspaceId = workspace.Id, Status = "Processing" };
             db.Expenses.Add(expense);
             await db.SaveChangesAsync();
-            db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, DateTimeOffset.UtcNow));
+            db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, DateTimeOffset.UtcNow.AddMinutes(-10)));
             var bytes = new byte[] { 1, 2, 3 };
             db.ExpenseImages.Add(new ExpenseImage
             {
@@ -142,8 +151,11 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         var ocr = new BlockingOcr();
         var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true });
         var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System, NullLogger<ReceiptExtractionProcessor>.Instance);
-        var first = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
-        var second = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
+        var bus = new RecoveryBus(processor);
+        var first = new ReceiptRecoveryWorker(factory, processor, bus, TimeProvider.System, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
+        var second = new ReceiptRecoveryWorker(factory, processor, bus, TimeProvider.System, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
         await first.SweepOnceAsync(CancellationToken.None);
         Assert.Equal(0, ocr.Calls);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -153,7 +165,11 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             await ocr.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await second.SweepOnceAsync(cancellation.Token);
             await second.SweepOnceAsync(cancellation.Token);
+            var republished = Assert.Single(bus.Published);
+            var duplicate = processor.ProcessAsync(republished, cancellation.Token);
             Assert.Equal(1, ocr.Calls);
+            ocr.Release.TrySetResult();
+            await duplicate.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
         {
@@ -185,7 +201,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             foreach (var expense in await db.Expenses.ToListAsync())
             {
                 var bytes = BitConverter.GetBytes(expense.Id);
-                db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, now));
+                db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, now.AddMinutes(-10)));
                 db.ExpenseExtractions.Add(new ExpenseExtraction
                 {
                     ExpenseId = expense.Id, ExpensePublicId = expense.PublicId,
@@ -199,7 +215,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             db.Expenses.Add(eligible);
             await db.SaveChangesAsync();
             eligiblePublicId = eligible.PublicId;
-            db.OutboxMessages.Add(ReceiptEvent(eligible.PublicId, now));
+            db.OutboxMessages.Add(ReceiptEvent(eligible.PublicId, now.AddMinutes(-10)));
             var imageBytes = new byte[] { 80, 81, 82 };
             db.ExpenseImages.Add(new ExpenseImage
             {
@@ -215,7 +231,9 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true });
         var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System,
             NullLogger<ReceiptExtractionProcessor>.Instance);
-        var worker = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
+        var bus = new RecoveryBus(processor);
+        var worker = new ReceiptRecoveryWorker(factory, processor, bus, TimeProvider.System, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
         await worker.SweepOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, ocr.Calls);
@@ -236,7 +254,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             var expense = new Expense { Workspace = new Workspace { Name = "Retry" }, Status = "Processing" };
             db.AddRange(profile, expense);
             await db.SaveChangesAsync();
-            db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, DateTimeOffset.UtcNow));
+            db.OutboxMessages.Add(ReceiptEvent(expense.PublicId, DateTimeOffset.UtcNow.AddMinutes(-10)));
             var bytes = new byte[] { 4, 5, 6 };
             db.ExpenseImages.Add(new ExpenseImage
             {
@@ -248,15 +266,31 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             await db.SaveChangesAsync();
         }
         var ocr = new FailOnceOcr();
-        var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true, RetryBackoffBaseSeconds = 0 });
-        var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System, NullLogger<ReceiptExtractionProcessor>.Instance);
-        var worker = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
-        await worker.SweepOnceAsync(CancellationToken.None);
-        await using (var db = await factory.CreateDbContextAsync())
-            Assert.Equal("RetryPending", (await db.ExpenseExtractions.SingleAsync()).Status);
-        await worker.SweepOnceAsync(CancellationToken.None);
-        await using var verify = await factory.CreateDbContextAsync();
-        var extraction = await verify.ExpenseExtractions.SingleAsync();
+        var clock = new TestClock(DateTimeOffset.UtcNow);
+        var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true });
+        var processor = new ReceiptExtractionProcessor(factory, ocr, settings, clock, NullLogger<ReceiptExtractionProcessor>.Instance);
+        var bus = new RecoveryBus();
+        var worker = new ReceiptRecoveryWorker(factory, processor, bus, clock, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await worker.SweepOnceAsync(watchdog.Token);
+        using (var interrupted = CancellationTokenSource.CreateLinkedTokenSource(watchdog.Token))
+        {
+            var delivery = processor.ProcessAsync(Assert.Single(bus.Published), interrupted.Token);
+            await using var db = await factory.CreateDbContextAsync(watchdog.Token);
+            while (!await db.ExpenseExtractions.AnyAsync(row => row.Status == "RetryPending", watchdog.Token))
+                await Task.Delay(20, watchdog.Token);
+            interrupted.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery.WaitAsync(watchdog.Token));
+        }
+        await worker.SweepOnceAsync(watchdog.Token);
+        Assert.Single(bus.Published);
+        clock.Now += TimeSpan.FromSeconds(31);
+        await worker.SweepOnceAsync(watchdog.Token);
+        Assert.Equal(2, bus.Published.Count);
+        await processor.ProcessAsync(bus.Published[1], watchdog.Token);
+        await using var verify = await factory.CreateDbContextAsync(watchdog.Token);
+        var extraction = await verify.ExpenseExtractions.SingleAsync(watchdog.Token);
         Assert.Equal("NeedsReview", extraction.Status);
         Assert.Equal(2, extraction.AttemptCount);
         Assert.Equal(2, ocr.Calls);
@@ -300,7 +334,9 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         var ocr = new CountingOcr();
         var settings = Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Enabled = true });
         var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System, NullLogger<ReceiptExtractionProcessor>.Instance);
-        var worker = new ReceiptRecoveryWorker(factory, processor, settings, NullLogger<ReceiptRecoveryWorker>.Instance);
+        var bus = new RecoveryBus(processor);
+        var worker = new ReceiptRecoveryWorker(factory, processor, bus, TimeProvider.System, settings,
+            NullLogger<ReceiptRecoveryWorker>.Instance);
         await worker.SweepOnceAsync(CancellationToken.None);
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -310,7 +346,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             {
                 await using var transaction = await db.Database.BeginTransactionAsync();
                 var message = await db.OutboxMessages.SingleAsync(m => m.Id == messageId);
-                message.PublishedAt = DateTimeOffset.UtcNow;
+                message.PublishedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
                 await db.SaveChangesAsync();
                 await worker.SweepOnceAsync(CancellationToken.None);
                 Assert.Empty(await db.ExpenseExtractions.ToListAsync());
@@ -337,6 +373,27 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             CreatedAt = now, PublishedAt = publishedAt,
         };
+    }
+
+    private sealed class TestClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private sealed class RecoveryBus(ReceiptExtractionProcessor? processor = null) : ICompanionMessageBus
+    {
+        public List<ReceiptUploadedEvent> Published { get; } = [];
+
+        public Task PublishAsync<T>(T message, CancellationToken cancellationToken = default) where T : class
+        {
+            var receipt = Assert.IsType<ReceiptUploadedEvent>(message);
+            Published.Add(receipt);
+            return processor?.ProcessAsync(receipt, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task<IAsyncDisposable> SubscribeAsync<T>(string subscriptionId, Func<T, CancellationToken, Task> handler,
+            CancellationToken cancellationToken = default) where T : class => throw new NotSupportedException();
     }
 
     private sealed class BlockingOcr : IOcrEngine

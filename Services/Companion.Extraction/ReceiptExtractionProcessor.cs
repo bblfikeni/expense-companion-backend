@@ -44,27 +44,8 @@ public sealed class ReceiptExtractionProcessor(
         }
     }
 
-    public async Task RecoverAsync(Guid expensePublicId, CancellationToken cancellationToken)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.MessageTimeoutSeconds)));
-        var claim = (await TryClaimAsync(expensePublicId, timeout.Token)).Claim;
-        if (claim is null) return;
-        try
-        {
-            await ExtractAndPersistAsync(claim, timeout.Token);
-        }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            var retry = await RecordFailureAsync(claim, timeout.Token);
-            logger.LogError("Receipt recovery failed for {ExpensePublicId}; retry {WillRetry}, failure type {FailureType}.",
-                expensePublicId, retry, exception.GetType().Name);
-        }
-    }
+    internal async Task<bool> CanRepublishAsync(Guid expensePublicId, CancellationToken cancellationToken)
+        => (await TryClaimAsync(expensePublicId, cancellationToken, checkRecovery: true)).CanRepublish;
 
     private async Task<ExtractionClaim?> ClaimAsync(Guid expensePublicId, CancellationToken ct)
     {
@@ -73,11 +54,11 @@ public sealed class ReceiptExtractionProcessor(
             var decision = await TryClaimAsync(expensePublicId, ct);
             if (decision.Claim is not null || decision.WaitUntil is null) return decision.Claim;
             var delay = decision.WaitUntil.Value - clock.GetUtcNow();
-            if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
+            if (delay > TimeSpan.Zero) await Task.Delay(TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds, 1)), ct);
         }
     }
 
-    private async Task<ClaimDecision> TryClaimAsync(Guid expensePublicId, CancellationToken ct)
+    private async Task<ClaimDecision> TryClaimAsync(Guid expensePublicId, CancellationToken ct, bool checkRecovery = false)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async _ =>
@@ -131,6 +112,11 @@ public sealed class ReceiptExtractionProcessor(
                 await db.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
                 return new ClaimDecision(null, null);
+            }
+            if (checkRecovery)
+            {
+                await transaction.CommitAsync(ct);
+                return new ClaimDecision(null, null, CanRepublish: true);
             }
             var ticks = now.UtcTicks - now.UtcTicks % 10;
             var token = new DateTimeOffset(ticks, TimeSpan.Zero);
@@ -287,7 +273,7 @@ public sealed class ReceiptExtractionProcessor(
 
     private sealed record ReceiptImage(int Id, int PageNo, string Sha256, string? Label);
     private sealed record ProcessedPage(int PageNo, string DocumentType, string? Label, string? CrossCheckReason, OcrResult Ocr);
-    private sealed record ClaimDecision(ExtractionClaim? Claim, DateTimeOffset? WaitUntil);
+    private sealed record ClaimDecision(ExtractionClaim? Claim, DateTimeOffset? WaitUntil, bool CanRepublish = false);
     private sealed record ExtractionClaim(int ExtractionId, int ExpenseId, Guid ExpensePublicId,
         IReadOnlyList<ReceiptImage> Images, DateTimeOffset StartedAt);
 }

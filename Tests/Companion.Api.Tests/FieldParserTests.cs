@@ -50,10 +50,16 @@ public class FieldParserTests
     }
 
     [Theory]
-    [InlineData("zero-rated", "R0.00", "Zero_Rated")]
-    [InlineData("zero-rated items", "R5.00", null)]
-    public void HandlesZeroAndMixedRates(string description, string vat, string? classification)
-        => Assert.Equal(classification, Parse($"Shop Name\n{description}\nTotal R115.00\nVAT {vat}").VatClassification);
+    [InlineData("zero-rated", "R0.00", 0, "Zero_Rated")]
+    [InlineData("mixed-rate receipt", "R5.00", 500, null)]
+    public void HandlesZeroAndMixedRates(string description, string vat, long cents, string? classification)
+    {
+        var result = Parse($"Shop Name\nTax Invoice\n{description}\nTotal R115.00\nVAT {vat}");
+        Assert.Equal(cents, result.VatAmountCents);
+        Assert.Equal(classification, result.VatClassification);
+        Assert.Equal(0.8, result.VatAmountConfidence, 5);
+        Assert.True(result.IsValidTaxInvoice);
+    }
 
     [Fact]
     public void MissingVatIsNotDerived()

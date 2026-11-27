@@ -1,5 +1,7 @@
 using Companion.Data;
+using Companion.Events;
 using Companion.Extraction.Configuration;
+using Companion.Messaging;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -8,6 +10,8 @@ namespace Companion.Extraction;
 public sealed class ReceiptRecoveryWorker(
     IDbContextFactory<CompanionDbContext> contextFactory,
     ReceiptExtractionProcessor processor,
+    ICompanionMessageBus bus,
+    TimeProvider clock,
     IOptions<ExtractionOptions> options,
     ILogger<ReceiptRecoveryWorker> logger) : BackgroundService
 {
@@ -45,15 +49,22 @@ public sealed class ReceiptRecoveryWorker(
         try
         {
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var candidates = db.Expenses.FromSqlRaw("""
+            var now = clock.GetUtcNow();
+            var expiredBefore = now - ExtractionOptions.ProcessingLease;
+            var candidates = db.Expenses.FromSqlInterpolated($"""
                 SELECT e.* FROM expenses e
                 WHERE e.status = 'Processing' AND EXISTS (
                     SELECT 1 FROM public.published_receipt_events o
                     WHERE o.expense_public_id = e.public_id::text
+                      AND (o.published_at <= {expiredBefore} OR EXISTS (
+                          SELECT 1 FROM expense_extractions x WHERE x.expense_id = e.id
+                      ))
                 ) AND NOT EXISTS (
                     SELECT 1 FROM expense_extractions x
                     WHERE x.expense_id = e.id
-                      AND (x.completed_at IS NOT NULL OR x.status NOT IN ('Processing', 'RetryPending'))
+                      AND (x.completed_at IS NOT NULL OR x.status NOT IN ('Processing', 'RetryPending')
+                           OR (x.status = 'Processing' AND x.started_at > {expiredBefore})
+                           OR (x.status = 'RetryPending' AND x.next_attempt_at > {now}))
                 )
                 """).AsNoTracking();
             _roundEnd ??= await candidates
@@ -70,7 +81,16 @@ public sealed class ReceiptRecoveryWorker(
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    await processor.RecoverAsync(expense.PublicId, cancellationToken);
+                    if (await processor.CanRepublishAsync(expense.PublicId, cancellationToken))
+                    {
+                        await bus.PublishAsync(new ReceiptUploadedEvent
+                        {
+                            EventId = Guid.NewGuid(),
+                            ExpensePublicId = expense.PublicId,
+                            RequestedAt = now,
+                            OccurredAtUtc = now,
+                        }, cancellationToken);
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {

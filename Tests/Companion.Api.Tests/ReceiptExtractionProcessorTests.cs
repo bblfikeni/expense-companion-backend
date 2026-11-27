@@ -171,7 +171,7 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
         });
         var processor = new ReceiptExtractionProcessor(factory, ocr, settings, TimeProvider.System,
             NullLogger<ReceiptExtractionProcessor>.Instance);
-        await processor.RecoverAsync(expensePublicId, CancellationToken.None);
+        Assert.False(await processor.CanRepublishAsync(expensePublicId, CancellationToken.None));
 
         await using var verify = await factory.CreateDbContextAsync();
         var extraction = await verify.ExpenseExtractions.SingleAsync();

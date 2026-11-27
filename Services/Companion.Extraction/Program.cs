@@ -1,9 +1,7 @@
 using Companion.Configuration;
-using Companion.Extraction;
 using Companion.Extraction.Configuration;
 using Companion.Extraction.Ocr;
 using Companion.Messaging;
-using Companion.Data.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Companion.Extraction;
@@ -13,6 +11,18 @@ internal static class Program
     public static void Main(string[] args)
     {
         var builder = Host.CreateApplicationBuilder(args);
+        Configure(builder);
+        using var host = builder.Build();
+        var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Companion.Extraction");
+        var enabled = host.Services.GetRequiredService<IOptions<ExtractionOptions>>().Value.Enabled;
+        logger.LogInformation("Extraction service started. Extraction enabled: {Enabled}.", enabled);
+        if (!enabled)
+            logger.LogInformation("Extraction is disabled; no database, broker or receipt subscription was initialized.");
+        host.Run();
+    }
+
+    internal static void Configure(HostApplicationBuilder builder)
+    {
         builder.Configuration.AddCompanionAppSettings(builder.Environment);
 
         var extractionEnabled = builder.Configuration.GetValue("Extraction:Enabled", false);
@@ -30,9 +40,6 @@ internal static class Program
                                      !string.IsNullOrWhiteSpace(options.OcrExecutablePath),
                     "Extraction requires positive timeouts and concurrency, a Tesseract executable, and a page segmentation mode between 0 and 13.")
                 .ValidateOnStart();
-        }
-        if (extractionEnabled)
-        {
             builder.Services.AddCompanionPostgres(builder.Configuration, connectionStringName: "ExtractionDb");
             builder.Services.AddCompanionMessaging(builder.Configuration);
             builder.Services.AddSingleton(TimeProvider.System);
@@ -43,12 +50,5 @@ internal static class Program
             builder.Services.AddHostedService<ReceiptRecoveryWorker>();
         }
 
-        var host = builder.Build();
-        var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Companion.Extraction");
-        var enabled = host.Services.GetRequiredService<IOptions<ExtractionOptions>>().Value.Enabled;
-        logger.LogInformation("Extraction service started. Extraction enabled: {Enabled}.", enabled);
-        if (!enabled)
-            logger.LogInformation("Extraction is disabled; no database, broker or receipt subscription was initialized.");
-        host.Run();
     }
 }

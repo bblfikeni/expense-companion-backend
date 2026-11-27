@@ -141,10 +141,14 @@ public sealed class ExtractionWorkerTests
     {
         private Func<ReceiptUploadedEvent, CancellationToken, Task>? _handler;
         public int SubscriptionCalls { get; private set; }
+        public int PublishCalls { get; private set; }
         public TaskCompletionSource Subscribed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task PublishAsync<T>(T message, CancellationToken cancellationToken = default) where T : class
-            => Task.CompletedTask;
+        {
+            PublishCalls++;
+            return Task.CompletedTask;
+        }
 
         public Task<IAsyncDisposable> SubscribeAsync<T>(string subscriptionId,
             Func<T, CancellationToken, Task> handler, CancellationToken cancellationToken = default) where T : class
