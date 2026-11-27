@@ -221,7 +221,7 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
             await using (var db = await factory.CreateDbContextAsync())
             {
                 var extraction = await db.ExpenseExtractions.SingleAsync();
-                extraction.StartedAt = DateTimeOffset.UtcNow.AddSeconds(-319);
+                extraction.StartedAt = DateTimeOffset.UtcNow - ExtractionOptions.ProcessingLease + TimeSpan.FromSeconds(1);
                 await db.SaveChangesAsync();
             }
             var duplicate = processor.ProcessAsync(message, cancellation.Token);
@@ -256,7 +256,7 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
         public TaskCompletionSource ReleaseFirst { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseSecond { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public async Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             if (Interlocked.Increment(ref _calls) == 1)
             {
@@ -273,18 +273,13 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
         }
     }
 
-    private sealed class MemoryCapturingOcrEngine : IOcrEngine, IInMemoryOcrEngine
+    private sealed class MemoryCapturingOcrEngine : IOcrEngine
     {
         private int _fail = 1;
         public byte[]? CapturedBytes { get; private set; }
         private const string Text = "Demo Market\nTax Invoice\nDate: 25/11/2026\nTotal R100.00\nVAT R13.04";
 
-        public Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("The in-memory OCR method should be selected.");
-        }
-
-        public Task<OcrResult> ExtractFromMemoryAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
+        public Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             CapturedBytes = imageBytes.ToArray();
             if (Interlocked.Exchange(ref _fail, 0) == 1) throw new IOException("Injected transient OCR failure");
@@ -306,10 +301,9 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
 
     private sealed class TextOcrEngine(IReadOnlyDictionary<byte, string> texts) : IOcrEngine
     {
-        public async Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
-            var bytes = await File.ReadAllBytesAsync(imagePath, cancellationToken);
-            var text = texts[bytes[0]];
+            var text = texts[imageBytes[0]];
             var lines = text.Split('\n').Select(line => new OcrResult.OcrLineResult
             {
                 Text = line,
@@ -319,14 +313,14 @@ public sealed class ReceiptExtractionProcessorTests(PostgresFixture postgres)
                     Text = word, Confidence = 0.95, BoundingBox = RectangleF.Empty,
                 }).ToList(),
             }).ToList();
-            return new OcrResult { Text = text, MeanConfidence = 0.95, Lines = lines };
+            return Task.FromResult(new OcrResult { Text = text, MeanConfidence = 0.95, Lines = lines });
         }
     }
 
     private sealed class CountingOcrEngine : IOcrEngine
     {
         public int Calls { get; private set; }
-        public Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             Calls++;
             return Task.FromResult(new OcrResult { Text = string.Empty, MeanConfidence = 0, Lines = [] });

@@ -23,6 +23,12 @@ internal static class Program
             extractionOptions
                 .Validate(options => ExtractionOptions.HasCompatibleImageLimit(options.MaxImagesPerExpense),
                     $"Extraction:MaxImagesPerExpense must equal the gateway limit of {ExtractionOptions.ApiMaximumImagesPerExpense}.")
+                .Validate(options => options.MessageTimeoutSeconds is > 0 and <= ExtractionOptions.MaxMessageTimeoutSeconds &&
+                                     options.OcrTimeoutSeconds is > 0 and <= 4_294_967 &&
+                                     options.OcrMaxConcurrency > 0 &&
+                                     options.OcrPageSegmentationMode is >= 0 and <= 13 &&
+                                     !string.IsNullOrWhiteSpace(options.OcrExecutablePath),
+                    "Extraction requires positive timeouts and concurrency, a Tesseract executable, and a page segmentation mode between 0 and 13.")
                 .ValidateOnStart();
         }
         if (extractionEnabled)

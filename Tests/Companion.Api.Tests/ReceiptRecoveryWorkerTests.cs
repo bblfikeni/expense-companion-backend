@@ -345,7 +345,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
         public int Calls => _calls;
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public async Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public async Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _calls);
             Started.TrySetResult();
@@ -357,7 +357,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
     private sealed class FailOnceOcr : IOcrEngine
     {
         public int Calls { get; private set; }
-        public Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             if (++Calls == 1) throw new IOException("Injected failure");
             return Task.FromResult(new OcrResult { Text = "", MeanConfidence = 0, Lines = [] });
@@ -367,7 +367,7 @@ public sealed class ReceiptRecoveryWorkerTests(PostgresFixture postgres)
     private sealed class CountingOcr : IOcrEngine
     {
         public int Calls { get; private set; }
-        public Task<OcrResult> ExtractAsync(string imagePath, CancellationToken cancellationToken = default)
+        public Task<OcrResult> ExtractAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
         {
             Calls++;
             return Task.FromResult(new OcrResult { Text = "", MeanConfidence = 0, Lines = [] });

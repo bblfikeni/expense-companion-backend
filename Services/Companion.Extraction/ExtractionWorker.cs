@@ -34,6 +34,22 @@ public sealed class ExtractionWorker(
             return;
         }
 
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(options.Value.MessageTimeoutSeconds));
+        try
+        {
+            await ProcessWithRetriesAsync(message, deadline.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            logger.LogWarning("Receipt extraction deadline expired for {ExpensePublicId} ({EventId}).",
+                message.ExpensePublicId, message.EventId);
+            throw new ExtractionMessageTimeout();
+        }
+    }
+
+    private async Task ProcessWithRetriesAsync(ReceiptUploadedEvent message, CancellationToken cancellationToken)
+    {
         var maxAttempts = Math.Max(1, options.Value.MaxRetries);
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -60,3 +76,5 @@ public sealed class ExtractionWorker(
         }
     }
 }
+
+public sealed class ExtractionMessageTimeout() : TimeoutException("Receipt extraction exceeded the configured message deadline.");

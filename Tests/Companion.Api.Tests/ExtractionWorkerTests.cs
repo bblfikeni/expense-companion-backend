@@ -137,7 +137,7 @@ public sealed class ExtractionWorkerTests
         }
     }
 
-    private sealed class RecordingBus : ICompanionMessageBus
+    internal sealed class RecordingBus : ICompanionMessageBus
     {
         private Func<ReceiptUploadedEvent, CancellationToken, Task>? _handler;
         public int SubscriptionCalls { get; private set; }

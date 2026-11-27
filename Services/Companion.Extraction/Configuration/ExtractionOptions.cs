@@ -20,11 +20,19 @@ public class ExtractionOptions
     public bool Enabled { get; set; } = false;
 
     /// <summary>
-    /// Per-message processing timeout in seconds.
-    /// Must be less than half the sweeper timeout (sweeper = 5 min = 300s).
-    /// Default: 120 (2 minutes).
+    /// Time budget in seconds for a receipt delivery, including claim waits and retries. The default of
+    /// 120s is less than half the default 540s recovery lease.
     /// </summary>
     public int MessageTimeoutSeconds { get; set; } = 120;
+
+    internal static readonly TimeSpan ProcessingLease = TimeSpan.FromSeconds(540);
+    // Leave room for process cleanup before half the lease has elapsed.
+    public const int MaxMessageTimeoutSeconds = 268;
+
+    public string OcrExecutablePath { get; set; } = "tesseract";
+    public int OcrPageSegmentationMode { get; set; } = 6;
+    public int OcrTimeoutSeconds { get; set; } = 30;
+    public int OcrMaxConcurrency { get; set; } = 2;
 
     /// <summary>
     /// Maximum number of retries for transient failures.

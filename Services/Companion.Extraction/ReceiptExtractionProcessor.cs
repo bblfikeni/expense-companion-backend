@@ -27,11 +27,9 @@ public sealed class ReceiptExtractionProcessor(
         {
             var claim = await ClaimAsync(message.ExpensePublicId, cancellationToken);
             if (claim is null) return;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.MessageTimeoutSeconds)));
             try
             {
-                if (await ExtractAndPersistAsync(claim, timeout.Token)) return;
+                if (await ExtractAndPersistAsync(claim, cancellationToken)) return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -48,21 +46,21 @@ public sealed class ReceiptExtractionProcessor(
 
     public async Task RecoverAsync(Guid expensePublicId, CancellationToken cancellationToken)
     {
-        var claim = (await TryClaimAsync(expensePublicId, cancellationToken)).Claim;
-        if (claim is null) return;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.MessageTimeoutSeconds)));
+        var claim = (await TryClaimAsync(expensePublicId, timeout.Token)).Claim;
+        if (claim is null) return;
         try
         {
             await ExtractAndPersistAsync(claim, timeout.Token);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception exception)
         {
-            var retry = await RecordFailureAsync(claim, cancellationToken);
+            var retry = await RecordFailureAsync(claim, timeout.Token);
             logger.LogError("Receipt recovery failed for {ExpensePublicId}; retry {WillRetry}, failure type {FailureType}.",
                 expensePublicId, retry, exception.GetType().Name);
         }
@@ -82,7 +80,7 @@ public sealed class ReceiptExtractionProcessor(
     private async Task<ClaimDecision> TryClaimAsync(Guid expensePublicId, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async _ =>
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -96,7 +94,7 @@ public sealed class ReceiptExtractionProcessor(
 
             var images = await db.ExpenseImages.AsNoTracking().Where(i => i.ExpenseId == expense.Id)
                 .OrderBy(i => i.PageNo)
-                .Select(i => new ReceiptImage(i.Id, i.PageNo, i.ContentType, i.Sha256, i.Label))
+                .Select(i => new ReceiptImage(i.Id, i.PageNo, i.Sha256, i.Label))
                 .ToListAsync(ct);
             if (images.Count == 0 || images.Count > _options.MaxImagesPerExpense)
             {
@@ -108,7 +106,7 @@ public sealed class ReceiptExtractionProcessor(
             var extraction = await db.ExpenseExtractions.SingleOrDefaultAsync(
                 e => e.ExpenseId == expense.Id && e.ImageSetHash == hash, ct);
             var now = clock.GetUtcNow();
-            var lease = TimeSpan.FromSeconds(Math.Max(30, _options.MessageTimeoutSeconds * 2 + 300));
+            var lease = ExtractionOptions.ProcessingLease;
             if (extraction?.CompletedAt is not null ||
                 extraction is not null && extraction.Status is not ("Processing" or "RetryPending"))
             {
@@ -163,7 +161,7 @@ public sealed class ReceiptExtractionProcessor(
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return new ClaimDecision(new ExtractionClaim(extraction.Id, expense.Id, expense.PublicId, images, token), null);
-        });
+        }, ct);
     }
 
     private async Task<bool> ExtractAndPersistAsync(ExtractionClaim claim, CancellationToken ct)
@@ -193,7 +191,7 @@ public sealed class ReceiptExtractionProcessor(
             parsed.VatAmountConfidence, parsed.VatNumberConfidence, parsed.DocumentValidityConfidence }.Average();
 
         await using var db = await contextFactory.CreateDbContextAsync(ct);
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async _ =>
         {
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -235,7 +233,7 @@ public sealed class ReceiptExtractionProcessor(
         logger.LogInformation("Receipt extraction stored for {ExpensePublicId} with {PageCount} pages; status NeedsReview.",
             claim.ExpensePublicId, pages.Count);
         return true;
-        });
+        }, ct);
     }
 
     private async Task<OcrResult> ExtractImageAsync(ReceiptImage image, CancellationToken ct)
@@ -245,41 +243,20 @@ public sealed class ReceiptExtractionProcessor(
             .Where(blob => blob.ExpenseImageId == image.Id)
             .Select(blob => blob.Content)
             .SingleOrDefaultAsync(ct) ?? throw new InvalidDataException("Stored receipt image has no blob.");
-        string? path = null;
         try
         {
-            if (ocrEngine is IInMemoryOcrEngine inMemoryEngine)
-                return await inMemoryEngine.ExtractFromMemoryAsync(bytes, ct);
-
-            var extension = image.ContentType switch { "image/jpeg" => ".jpg", "image/png" => ".png", "image/webp" => ".webp", _ => throw new InvalidDataException("Unsupported stored image type.") };
-            path = Path.Combine(Path.GetTempPath(), $"companion-{Guid.NewGuid():N}{extension}");
-            var fileOptions = new FileStreamOptions
-            {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.Write,
-                Share = FileShare.Read,
-                Options = FileOptions.Asynchronous,
-            };
-            if (!OperatingSystem.IsWindows())
-                fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            await using (var file = new FileStream(path, fileOptions))
-            {
-                await file.WriteAsync(bytes, ct);
-            }
-            return await ocrEngine.ExtractAsync(path, ct);
+            return await ocrEngine.ExtractAsync(bytes, ct);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(bytes);
-            if (path is not null)
-                try { File.Delete(path); } catch (IOException) { }
         }
     }
 
     private async Task<bool> RecordFailureAsync(ExtractionClaim claim, CancellationToken ct)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async _ =>
         {
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -302,10 +279,10 @@ public sealed class ReceiptExtractionProcessor(
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return true;
-        });
+        }, ct);
     }
 
-    private sealed record ReceiptImage(int Id, int PageNo, string ContentType, string Sha256, string? Label);
+    private sealed record ReceiptImage(int Id, int PageNo, string Sha256, string? Label);
     private sealed record ProcessedPage(int PageNo, string DocumentType, string? Label, string? CrossCheckReason, OcrResult Ocr);
     private sealed record ClaimDecision(ExtractionClaim? Claim, DateTimeOffset? WaitUntil);
     private sealed record ExtractionClaim(int ExtractionId, int ExpenseId, Guid ExpensePublicId,

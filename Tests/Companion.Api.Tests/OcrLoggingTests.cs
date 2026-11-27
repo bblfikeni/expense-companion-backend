@@ -1,3 +1,4 @@
+using Companion.Extraction.Configuration;
 using Companion.Extraction.Ocr;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -7,29 +8,30 @@ namespace Companion.Api.Tests;
 public class OcrLoggingTests
 {
     [Fact]
-    public async Task FailedExtractionLogsProgressWithoutLoggingImagePath()
+    public async Task FailedProcessStartDoesNotExposeExecutablePath()
     {
         var logger = new RecordingLogger();
-        var engine = new TesseractOcrEngine(logger: logger);
-        const string imagePath = "sensitive-receipt-path.jpg";
+        var path = Path.Combine(Path.GetTempPath(), "sensitive-receipt-path", Guid.NewGuid().ToString());
+        using var engine = new TesseractOcrEngine(Microsoft.Extensions.Options.Options.Create(new ExtractionOptions
+        {
+            OcrExecutablePath = path,
+        }), logger);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => engine.ExtractAsync(imagePath));
+        var error = await Assert.ThrowsAsync<OcrProcessException>(() => engine.ExtractAsync([1]));
 
-        Assert.Contains(logger.Messages, message => message.Contains("started"));
-        Assert.Contains(logger.Messages, message => message.Contains("failed"));
-        Assert.DoesNotContain(logger.Messages, message => message.Contains(imagePath));
+        Assert.DoesNotContain(path, error.ToString());
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(path));
     }
 
     [Fact]
-    public async Task PreCanceledExtractionDoesNotInitializeNativeEngine()
+    public async Task PreCanceledExtractionDoesNotStartTheOcrProcess()
     {
         var logger = new RecordingLogger();
-        var engine = new TesseractOcrEngine(logger: logger);
+        using var engine = new TesseractOcrEngine(Microsoft.Extensions.Options.Options.Create(new ExtractionOptions()), logger);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            engine.ExtractAsync("sensitive-receipt-path.jpg", cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => engine.ExtractAsync([1], cancellation.Token));
 
         Assert.Empty(logger.Messages);
     }
