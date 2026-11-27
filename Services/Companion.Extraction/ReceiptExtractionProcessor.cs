@@ -84,9 +84,9 @@ public sealed class ReceiptExtractionProcessor(
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            var expense = await db.Expenses.FromSqlInterpolated($"SELECT * FROM expenses WHERE public_id = {expensePublicId} FOR UPDATE")
-                .SingleOrDefaultAsync(ct);
-            if (expense is null || expense.Status != "Processing")
+            var expense = await db.Expenses.Where(e => e.PublicId == expensePublicId)
+                .Select(e => new { e.Id, e.PublicId }).SingleOrDefaultAsync(ct);
+            if (expense is null || !await LockProcessingExpenseAsync(db, expense.Id, ct))
             {
                 await transaction.RollbackAsync(ct);
                 return new ClaimDecision(null, null);
@@ -195,10 +195,10 @@ public sealed class ReceiptExtractionProcessor(
         {
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var expense = await db.Expenses.FromSqlInterpolated($"SELECT * FROM expenses WHERE id = {claim.ExpenseId} FOR UPDATE")
-            .SingleOrDefaultAsync(ct);
+        if (!await LockProcessingExpenseAsync(db, claim.ExpenseId, ct))
+            return false;
         var extraction = await db.ExpenseExtractions.SingleAsync(e => e.Id == claim.ExtractionId, ct);
-        if (expense?.Status != "Processing" || extraction.Status != "Processing" ||
+        if (extraction.Status != "Processing" ||
             extraction.CompletedAt is not null || extraction.StartedAt != claim.StartedAt)
             return false;
         extraction.Vendor = parsed.Vendor;
@@ -260,10 +260,10 @@ public sealed class ReceiptExtractionProcessor(
         {
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var expense = await db.Expenses.FromSqlInterpolated($"SELECT * FROM expenses WHERE id = {claim.ExpenseId} FOR UPDATE")
-            .SingleOrDefaultAsync(ct);
+        if (!await LockProcessingExpenseAsync(db, claim.ExpenseId, ct))
+            return false;
         var extraction = await db.ExpenseExtractions.SingleOrDefaultAsync(e => e.Id == claim.ExtractionId, ct);
-        if (expense?.Status != "Processing" || extraction is null || extraction.Status != "Processing" ||
+        if (extraction is null || extraction.Status != "Processing" ||
             extraction.CompletedAt is not null || extraction.StartedAt != claim.StartedAt) return false;
         if (extraction.AttemptCount >= Math.Max(1, _options.MaxRetries))
         {
@@ -281,6 +281,9 @@ public sealed class ReceiptExtractionProcessor(
         return true;
         }, ct);
     }
+
+    private static Task<bool> LockProcessingExpenseAsync(CompanionDbContext db, int expenseId, CancellationToken ct)
+        => db.Database.SqlQuery<bool>($"SELECT public.lock_extraction_expense({expenseId}) AS \"Value\"").SingleAsync(ct);
 
     private sealed record ReceiptImage(int Id, int PageNo, string Sha256, string? Label);
     private sealed record ProcessedPage(int PageNo, string DocumentType, string? Label, string? CrossCheckReason, OcrResult Ocr);

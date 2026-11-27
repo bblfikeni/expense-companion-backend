@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <None Include="../../infra/sql/extraction-role.sql" Link="extraction-role.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

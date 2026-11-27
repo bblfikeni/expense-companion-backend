@@ -82,6 +82,7 @@ services:
       # Local testing only: set Extraction__Enabled to "true" in a separate
       # Compose override after applying migrations and provisioning the extraction role.
       Extraction__Enabled: "false"
+      ConnectionStrings__ExtractionDb: ${COMPANION_EXTRACTION_DB:-}
       RabbitMq__ConnectionString: *local-rabbitmq
 
 volumes:

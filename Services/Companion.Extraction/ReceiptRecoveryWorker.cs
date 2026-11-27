@@ -1,5 +1,4 @@
 using Companion.Data;
-using Companion.Events;
 using Companion.Extraction.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -46,12 +45,11 @@ public sealed class ReceiptRecoveryWorker(
         try
         {
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var candidates = db.Expenses.FromSqlInterpolated($"""
+            var candidates = db.Expenses.FromSqlRaw("""
                 SELECT e.* FROM expenses e
                 WHERE e.status = 'Processing' AND EXISTS (
-                    SELECT 1 FROM outbox_messages o
-                    WHERE o.type = {nameof(ReceiptUploadedEvent)} AND o.published_at IS NOT NULL
-                      AND o.payload ->> 'expensePublicId' = e.public_id::text
+                    SELECT 1 FROM public.published_receipt_events o
+                    WHERE o.expense_public_id = e.public_id::text
                 ) AND NOT EXISTS (
                     SELECT 1 FROM expense_extractions x
                     WHERE x.expense_id = e.id

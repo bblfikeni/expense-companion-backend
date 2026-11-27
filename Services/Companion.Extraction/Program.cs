@@ -33,7 +33,7 @@ internal static class Program
         }
         if (extractionEnabled)
         {
-            builder.Services.AddCompanionPostgres(builder.Configuration);
+            builder.Services.AddCompanionPostgres(builder.Configuration, connectionStringName: "ExtractionDb");
             builder.Services.AddCompanionMessaging(builder.Configuration);
             builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<IOcrEngine, TesseractOcrEngine>();
