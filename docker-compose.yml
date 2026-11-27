@@ -1,6 +1,5 @@
 name: sars-companion
 
-# Local infrastructure only. Application services are not containerised yet.
 # Credentials come from environment variables — copy .env.example to .env first.
 
 services:
@@ -11,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - copy .env.example to .env}
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is not set - copy .env.example to .env}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -50,6 +49,40 @@ services:
       - "5341:80"
     volumes:
       - seq-data:/datavolumes
+
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: Services/Companion.Api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__CompanionDb: ${COMPANION_API_DB:-}
+      RabbitMq__ConnectionString: &local-rabbitmq "host=rabbitmq;username=${RABBITMQ_USER};password=${RABBITMQ_PASSWORD}"
+      Auth__Jwt__SigningKey: ${COMPANION_JWT_SIGNING_KEY:-}
+    ports:
+      - "127.0.0.1:${COMPANION_API_PORT:-8080}:8080"
+
+  extraction:
+    profiles: [app]
+    init: true
+    build:
+      context: .
+      dockerfile: Services/Companion.Extraction/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # Local testing only: set Extraction__Enabled to "true" in a separate
+      # Compose override after applying migrations and provisioning the extraction role.
+      Extraction__Enabled: "false"
+      RabbitMq__ConnectionString: *local-rabbitmq
 
 volumes:
   postgres-data:

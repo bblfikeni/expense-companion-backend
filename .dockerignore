@@ -1,7 +1,9 @@
 # Excluded from Docker build contexts
 .git
 web/
-bin/
-obj/
+**/bin
+**/obj
 .env
+.env.*
 secrets/
+**/appsettings.Development.json
