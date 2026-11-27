@@ -64,6 +64,7 @@ services:
       ConnectionStrings__CompanionDb: ${COMPANION_API_DB:-}
       RabbitMq__ConnectionString: &local-rabbitmq "host=rabbitmq;username=${RABBITMQ_USER};password=${RABBITMQ_PASSWORD}"
       Auth__Jwt__SigningKey: ${COMPANION_JWT_SIGNING_KEY:-}
+      Auth__Otps__Pepper: ${COMPANION_OTP_PEPPER:-}
     ports:
       - "127.0.0.1:${COMPANION_API_PORT:-8080}:8080"
 
