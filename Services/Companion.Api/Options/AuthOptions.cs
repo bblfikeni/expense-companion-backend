@@ -16,6 +16,24 @@ public sealed class AuthOptions
 
     /// <summary>JWT bearer signing and validation parameters.</summary>
     public JwtOptions Jwt { get; set; } = new();
+
+    /// <summary>Cloudflare Turnstile configuration. Blank site key disables Turnstile.</summary>
+    public TurnstileOptions Turnstile { get; set; } = new();
+}
+
+public sealed class TurnstileOptions
+{
+    /// <summary>Site key for Turnstile widget (public key for client-side validation).</summary>
+    public string SiteKey { get; set; } = string.Empty;
+
+    /// <summary>Secret key for server-side Turnstile validation.</summary>
+    public string SecretKey { get; set; } = string.Empty;
+
+    /// <summary>Timeout in seconds to wait for Turnstile API response.</summary>
+    public int RequestTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>Minimum score threshold for valid Turnstile responses.</summary>
+    public float ScoreThreshold { get; set; } = 0.5f;
 }
 
 public sealed class GoogleOptions

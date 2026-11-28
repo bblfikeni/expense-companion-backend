@@ -60,6 +60,7 @@ public static class AuthenticationServiceCollectionExtensions
         // ---- AuthenticationService ----
         services.AddTransient<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<IGoogleIdTokenValidator, GoogleIdTokenValidator>();
+        services.AddSingleton<ITurnstileValidator, TurnstileValidator>();
 
         // ---- JWT Bearer ----
         var jwtIssuer = configuration["Auth:Jwt:Issuer"] ?? string.Empty;

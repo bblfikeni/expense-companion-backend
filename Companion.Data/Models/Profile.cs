@@ -16,6 +16,16 @@ public class Profile : IdentityUser<int>
     public required string FullName { get; set; }
 
     /// <summary>
+    /// Normalized phone number (E.164 format). Optional.
+    /// </summary>
+    public new string? PhoneNumber { get; set; }
+
+    /// <summary>
+    /// When the phone number was verified (null = not verified).
+    /// </summary>
+    public DateTimeOffset? PhoneNumberVerifiedAt { get; set; }
+
+    /// <summary>
     /// POPIA consent flag. The database has no CHECK constraint on consent —
     /// consent is deliberately modelled as an ordinary value so it can be
     /// recorded, revoked and anonymised without a schema change.

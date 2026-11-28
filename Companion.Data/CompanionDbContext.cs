@@ -114,6 +114,26 @@ public class CompanionDbContext
                 .HasDatabaseName("ix_otp_codes_profile_id_purpose");
         });
 
+        builder.Entity<RefreshToken>(entity =>
+        {
+            entity.ToTable("refresh_tokens");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Token)
+                .HasColumnType("varchar(256)")
+                .HasMaxLength(256);
+
+            entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasColumnType("timestamp with time zone");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at").HasColumnType("timestamp with time zone");
+
+            entity.HasIndex(e => e.Token).IsUnique();
+
+            entity.HasOne(e => e.Profile)
+                .WithMany()
+                .HasForeignKey(e => e.ProfileId).OnDelete(DeleteBehavior.Cascade);
+        });
+
         builder.Entity<ExpenseExtraction>(entity =>
         {
             entity.ToTable("expense_extractions");
@@ -291,6 +311,8 @@ public class CompanionDbContext
     private const string PlatformAdminConcurrencyStamp = "00000000-0000-0000-0000-000000000001";
 
     public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
+
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 

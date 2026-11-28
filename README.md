@@ -107,6 +107,11 @@ Set `COMPANION_WEB_ORIGIN` to the exact browser origin when it differs from
 `host.docker.internal` where supported or provide another address reachable
 from the container.
 
+# Google OAuth (required for Google sign-in)
+# Get from https://console.cloud.google.com/apis/credentials
+# Set `COMPANION_GOOGLE_CLIENT_ID` in the API app settings or `.env` file.
+# The web client must have its origin whitelisted as an authorised JavaScript origin.
+
 The extraction image includes Tesseract and the English and Afrikaans language
 data. Its standalone Compose service defaults to `Extraction:Enabled=false` and
 does not connect to either dependency while disabled. To start that disabled

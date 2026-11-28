@@ -16,7 +16,11 @@ public interface IAuthenticationService
     Task<ResendResult> ResendVerificationAsync(string email, CancellationToken cancellationToken = default);
     Task<LoginResult> LoginAsync(string email, string password, CancellationToken cancellationToken = default);
     Task<LoginResult> GoogleLoginAsync(string idToken, bool popiaConsent, CancellationToken cancellationToken = default);
+    Task<LoginResult> VerificationRequiredAsync(Guid profilePublicId, CancellationToken cancellationToken = default);
     Task<ForgotResult> ForgotPasswordAsync(string email, CancellationToken cancellationToken = default);
+    Task<RefreshTokenResult> GenerateRefreshTokenAsync(Guid profilePublicId, CancellationToken cancellationToken = default);
+    Task<RefreshTokenResult> RotateRefreshTokenAsync(string tokenValue, CancellationToken cancellationToken = default);
+    Task<RefreshTokenValidationResult> ValidateRefreshTokenAsync(string tokenValue, CancellationToken cancellationToken = default);
     Task<ResetResult> ResetPasswordAsync(string email, string code, string newPassword, CancellationToken cancellationToken = default);
     Task<ProfileResult?> GetProfileAsync(Guid profilePublicId, CancellationToken cancellationToken = default);
     Task<ProfileResult> UpdateProfileAsync(Guid profilePublicId, ProfileUpdateRequest request, CancellationToken cancellationToken = default);
@@ -98,6 +102,8 @@ public sealed class LoginResult
         => new(token, expiresInSeconds, success: true, isNewUser: isNewUser);
 
     public static LoginResult ConsentMissing => new(null, 0, success: false, consentRequired: true);
+
+    public static LoginResult VerificationRequired => new(null, 0, success: false, consentRequired: false);
 
     public static LoginResult Failed => new(null, 0, success: false);
 
@@ -182,4 +188,46 @@ public sealed class ProfileResult
     public string? DisplayName { get; }
 
     public Guid? PublicId { get; }
+}
+
+public sealed class RefreshTokenResult
+{
+    public static RefreshTokenResult Created(string token, int expiresInSeconds)
+        => new(token ?? string.Empty, expiresInSeconds, success: true);
+
+    public static RefreshTokenResult Invalid => new(null, 0, success: false, error: "Invalid refresh token");
+
+    public static RefreshTokenResult NotFound => new(string.Empty, 0, success: false, error: "User not found");
+
+    private RefreshTokenResult(string? token, int expiresInSeconds, bool success, string? error = null)
+    {
+        Token = token!;
+        ExpiresInSeconds = expiresInSeconds;
+        Success = success;
+        Error = error;
+    }
+
+    public string? Token { get; }  // Made nullable
+    public int ExpiresInSeconds { get; }
+    public bool Success { get; }
+    public string? Error { get; }
+}
+
+public sealed class RefreshTokenValidationResult
+{
+    public static RefreshTokenValidationResult Valid(int profileId, DateTimeOffset expiresAt)
+        => new(profileId, true, expiresAt);
+
+    public static RefreshTokenValidationResult Invalid => new(0, false, null);
+
+    private RefreshTokenValidationResult(int profileId, bool success, DateTimeOffset? expiresAt)
+    {
+        ProfileId = profileId;
+        Success = success;
+        ExpiresAt = expiresAt;
+    }
+
+    public int ProfileId { get; }
+    public bool Success { get; }
+    public DateTimeOffset? ExpiresAt { get; }
 }

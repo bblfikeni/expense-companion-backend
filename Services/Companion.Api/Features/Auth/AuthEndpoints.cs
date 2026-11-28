@@ -56,6 +56,51 @@ internal static class AuthEndpoints
             })
             .WithName("Login");
 
+        group.MapPost("/refresh-token",
+            async (Guid profilePublicId, IAuthenticationService auth, CancellationToken ct) =>
+            {
+                var result = await auth.GenerateRefreshTokenAsync(profilePublicId, ct);
+                return result.Success
+                    ? Results.Ok(new { result.Token, result.ExpiresInSeconds })
+                    : Results.Problem(statusCode: 400, title: result.Error ?? "Invalid request");
+            })
+            .WithName("RefreshToken");
+
+        group.MapPost("/rotate-token",
+            async (string tokenValue, IAuthenticationService auth, CancellationToken ct) =>
+            {
+                var result = await auth.RotateRefreshTokenAsync(tokenValue, ct);
+                return result.Success
+                    ? Results.Ok(new { result.Token, result.ExpiresInSeconds })
+                    : Results.Problem(statusCode: 400, title: result.Error ?? "Invalid refresh token");
+            })
+            .WithName("RotateToken");
+
+        group.MapPost("/validate-token",
+            async (string tokenValue, IAuthenticationService auth, CancellationToken ct) =>
+            {
+                var result = await auth.ValidateRefreshTokenAsync(tokenValue, ct);
+                return result.Success
+                    ? Results.Ok(new { result.ProfileId, result.ExpiresAt })
+                    : Results.Problem(statusCode: 400, title: "Invalid refresh token");
+            })
+            .WithName("ValidateToken");
+
+        group.MapPost("/onboard",
+            async (string profilePublicId, string fullName, bool consentGiven, IAuthenticationService auth, CancellationToken ct) =>
+            {
+                if (string.IsNullOrWhiteSpace(fullName))
+                    return Results.Problem(statusCode: 400, title: "Full name required");
+
+                if (consentGiven == false)
+                    return Results.Problem(statusCode: 400, title: "POPIA consent required");
+
+                // In a full implementation, we'd update profile onboarding status here
+                // For now, just return success
+                return Results.Ok(new { onboardingComplete = true });
+            })
+            .WithName("Onboard");
+
         group.MapPost("/google",
             async (GoogleLoginRequest request, IAuthenticationService auth, CancellationToken ct) =>
             {
