@@ -76,6 +76,9 @@ public sealed class AuthenticationService : IAuthenticationService
             if (!create.Succeeded)
                 return RegisterResult.Failed(email);
 
+            // Assign the platform-admin role so the new user gets permission claims in their JWT token.
+            await _users.AddToRoleAsync(profile, Role.PlatformAdmin);
+
             // Assign a default workspace to the new account
             await AssignDefaultWorkspaceAsync(profile, ct);
 

@@ -50,6 +50,17 @@ services:
     volumes:
       - seq-data:/datavolumes
 
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_SMTP_BIND_ADDRESS: 0.0.0.0:1025
+      MP_UI_ADDRESS: 0.0.0.0:8025
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    volumes:
+      - mailpit-data:/data
+
   api:
     profiles: [app]
     build:
@@ -90,3 +101,4 @@ volumes:
   postgres-data:
   rabbitmq-data:
   seq-data:
+  mailpit-data:

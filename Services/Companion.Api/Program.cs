@@ -54,8 +54,8 @@ try
 
     builder.Services.AddAuthorization(options =>
     {
-        options.AddPolicy("images:read", policy => policy.RequireClaim(Role.PermissionClaimType, "images:read"));
-        options.AddPolicy("images:write", policy => policy.RequireClaim(Role.PermissionClaimType, "images:write"));
+        options.AddPolicy("images:read", policy => policy.RequireClaim(Role.PermissionClaimType, "platform:*"));
+        options.AddPolicy("images:write", policy => policy.RequireClaim(Role.PermissionClaimType, "platform:*"));
     });
     builder.Services.AddAuthRateLimiting();
 
